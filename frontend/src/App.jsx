@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, BrowserRouter, useLocation } from 'react-router-dom';
 import GuestDashboard from './components/GuestDashboard';
 import Login from './components/Login';
@@ -53,11 +53,32 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // WHAT: Hanggang hindi natapos ang session check, ipinapakita ang light
+  //      skeleton placeholder — hindi isang buong loader. Kapag handa
+  //      na ang resulta, direktong ginagamit ang route na ito.
   useEffect(() => {
+    let active = true;
+
     getMe()
-      .then((u) => setUser(u))
-      .catch(() => setUser(null))
-      .finally(() => setLoading(false));
+      .then((nextUser) => {
+        if (active) {
+          setUser(nextUser);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   return (
