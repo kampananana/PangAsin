@@ -232,6 +232,10 @@ export function getAdminTrends() {
   return api('/admin/trends');
 }
 
+export function getAdminPredictive() {
+  return api('/admin/analytics/predictive');
+}
+
 export function createReport(payload) {
   return api('/admin/reports', { method: 'POST', body: JSON.stringify(payload) });
 }
