@@ -1,8 +1,8 @@
-import React, { useId } from 'react';
+import { useId } from 'react';
 
 export default function PageHeader({
   id, title, subtitle, children, action, actions, variant = 'main', eyebrow,
-  art, compact = false, status, stat, className = '',
+  art, filter, compact = false, status, stat, className = '',
 }) {
   const rawId = useId();
   const dotId = `ph-dots-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
@@ -63,6 +63,12 @@ export default function PageHeader({
         </div>
         {stat ? <div className="ui-pageheader-statstrip">{stat}</div> : null}
         {children ? <div className="ui-pageheader-controls">{children}</div> : null}
+        {filter ? (
+          <div className="ui-pageheader-filter">
+            <div className="ui-pageheader-filter-rule" aria-hidden="true" />
+            {filter}
+          </div>
+        ) : null}
       </header>
     );
   }

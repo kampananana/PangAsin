@@ -1926,15 +1926,103 @@ body {
 }
 .fc-run-btn:hover { border-color: var(--ui-accent); }
 
-/* Sticky pill navigation */
-.fc-nav-wrap {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+/* ---- Forecast filter area (merged into the page header, no separate card) ---- */
+.fc-filter-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.fc-filter-head .admin-card-head { align-items: center; gap: 8px; }
+.fc-filter-head .admin-card-head-title { font-size: 14px; font-weight: 700; }
+.fc-filter-grid {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.fc-filter-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.fc-filter-field .fc-filter-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ui-text-2);
+  text-transform: none;
+}
+.fc-filter-field .fc-filter-select {
+  height: 36px;
+  padding: 0 12px;
+  min-width: 112px;
+  font-size: 14px;
+  color: var(--ui-text);
   background: var(--ui-surface);
-  border-bottom: 1px solid var(--ui-border);
-  padding-top: 8px;
-  padding-bottom: 8px;
+  border: 1px solid var(--ui-guide);
+  border-radius: var(--ui-radius-input);
+  transition: border-color var(--ui-t-fast), box-shadow var(--ui-t-fast);
+  appearance: auto;
+}
+.fc-filter-field .fc-filter-select:focus {
+  outline: none;
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-accent-tint);
+}
+.fc-filter-summary {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--ui-text-muted);
+  line-height: 1.45;
+}
+
+/* Merged header + filters: one white container, thin divider between them */
+.ui-pageheader-filter {
+  padding: 14px 28px 18px;
+}
+.ui-pageheader-filter-rule {
+  height: 1px;
+  background: var(--ui-border);
+  margin-bottom: 14px;
+}
+
+/* Forecast page spacing — tighten the gaps that made it look busy */
+.forecast-page .fc-section { margin-top: 18px; }
+.forecast-page .fc-section-head { margin-bottom: 12px; }
+.forecast-page .fc-kpi-strip { margin-bottom: 14px; }
+.forecast-page .fc-nav-wrap { margin-top: 14px; margin-bottom: 18px; }
+.forecast-page .fc-reliability-note { margin-top: 18px; }
+.forecast-page .admin-single-page { padding-top: 16px; padding-bottom: 24px; }
+
+/* Tab navigation (encoder-style: navy active, white inactive) */
+.fc-nav-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--ui-active-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  width: fit-content;
+}
+.fc-nav-wrap .fc-pill {
+  border: none;
+  background: transparent;
+  color: var(--ui-text-2);
+  border-radius: 9px;
+  padding: 7px 18px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.fc-nav-wrap .fc-pill:hover {
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+.fc-nav-wrap .fc-pill--active {
+  background: var(--p-navy);
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(12, 35, 64, 0.30);
+}
+@media (max-width: 768px) {
+  .fc-nav-wrap { width: 100%; }
+  .fc-nav-wrap .fc-pill { flex: 1; text-align: center; padding: 8px 8px; font-size: 12px; }
 }
 .fc-pill {
   flex-shrink: 0;

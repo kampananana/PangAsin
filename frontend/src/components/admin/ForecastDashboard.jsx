@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Row, Col, Card, Alert, Form } from 'react-bootstrap';
 import ErrorBoundary from '../ErrorBoundary';
 import {
@@ -7,7 +7,8 @@ import {
 } from 'recharts';
 import {
   ChartLine, CalendarDays, Target, TrendingUp, ArrowDownRight,
-  Activity, ShieldCheck, Clock, Flag, List, Table as TableIcon, Zap,
+  Activity, ShieldCheck, Clock, Flag, List, Zap,
+  Filter,
 } from 'lucide-react';
 import {
   getMunicipalityOutlook, getAdminMunicipalities,
@@ -24,7 +25,7 @@ import ChartCard from '../ui/ChartCard';
 import ChartCaption from '../ChartCaption';
 import { formatMT } from '../../utils/volumeFormat';
 import {
-  label, unit, definition, TREND_LABELS, FORECAST_CONFIDENCE, DATA_SUFFICIENCY,
+  definition, TREND_LABELS, FORECAST_CONFIDENCE, DATA_SUFFICIENCY, methodName,
   SCOPE_ALL_LABEL,
 } from '../../constants/labels';
 
@@ -112,6 +113,144 @@ function PillNav({ activeId, onSelect }) {
    Main component
    =============================================================== */
 
+
+/* ===============================================================
+   Unified filter card (encoder-style white card)
+   =============================================================== */
+
+function ForecastFilterCard({
+  recordedWindow, onRecordedWindow,
+  forecastHorizon, onForecastHorizon,
+  selectedMuni, municipalities, onSelectedMuni,
+  province, onProvince,
+  productionMethod, onProductionMethod,
+  filterSummary,
+}) {
+  return (
+    <Card.Body className="fc-filter-card-body">
+      <div className="fc-filter-head">
+        <span className="admin-card-head-icon"><Filter size={16} strokeWidth={1.5} /></span>
+        <h5 className="admin-card-head-title mb-0">Filters</h5>
+      </div>
+      <div className="fc-filter-grid">
+        <div className="fc-filter-field">
+          <label className="fc-filter-label" htmlFor="forecast-historical-period">Historical period</label>
+          <Form.Select id="forecast-historical-period" value={recordedWindow} onChange={(e) => onRecordedWindow(e.target.value)} aria-label="Historical period">
+            <option value="6">Last 6 months</option>
+            <option value="12">Last 12 months</option>
+            <option value="24">Last 24 months</option>
+            <option value="all">All available data</option>
+          </Form.Select>
+        </div>
+        <div className="fc-filter-field">
+          <label className="fc-filter-label" htmlFor="forecast-horizon">Forecast horizon</label>
+          <Form.Select id="forecast-horizon" value={forecastHorizon} onChange={(e) => onForecastHorizon(e.target.value)} aria-label="Forecast horizon">
+            <option value="3">Next 3 months</option>
+            <option value="6">Next 6 months</option>
+            <option value="12">Next 12 months</option>
+          </Form.Select>
+        </div>
+        <div className="fc-filter-field">
+          <label className="fc-filter-label" htmlFor="forecast-muni-scope">Municipality</label>
+          <Form.Select id="forecast-muni-scope" value={selectedMuni} onChange={(e) => onSelectedMuni(e.target.value)} aria-label="Municipality">
+            <option value="all">{SCOPE_ALL_LABEL}</option>
+            {municipalities.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="fc-filter-field">
+          <label className="fc-filter-label" htmlFor="forecast-production-method">Production method</label>
+          <Form.Select id="forecast-production-method" value={productionMethod} onChange={(e) => onProductionMethod(e.target.value)} aria-label="Production method">
+            <option value="all">All methods</option>
+            <option value="solar">Solar</option>
+            <option value="cooked">Cooked</option>
+            <option value="hybrid">Hybrid</option>
+          </Form.Select>
+        </div>
+        <div className="fc-filter-field">
+          <label className="fc-filter-label" htmlFor="forecast-province">Province</label>
+          <Form.Select id="forecast-province" value={province} onChange={(e) => onProvince(e.target.value)} aria-label="Province">
+            <option value="pangasinan">Pangasinan</option>
+          </Form.Select>
+        </div>
+      </div>
+      <p className="fc-filter-summary" aria-live="polite">{filterSummary}</p>
+    </Card.Body>
+  );
+}
+
+/* ===============================================================
+   Forecast by municipality — ranked comparison panel (encoder-style)
+   =============================================================== */
+
+function ForecastByMunicipality({ rows, selectedMuni, onSelect }) {
+  if (rows.length === 0) {
+    return (
+      <div className="fc-empty-state">
+        <List size={24} strokeWidth={2} />
+        <p>No municipality forecast data available yet.</p>
+      </div>
+    );
+  }
+
+  const maxForecast = Math.max(...rows.map((r) => (r.forecastMT != null ? r.forecastMT : 0)), 0);
+
+  return (
+    <div className="fc-muni-panel">
+      <div className="fc-muni-panel-head">
+        <span className="fc-muni-panel-title">Forecast by municipality</span>
+        <span className="fc-muni-panel-sub">Sorted by forecasted production, highest first</span>
+      </div>
+      <ul className="fc-muni-list" role="list">
+        {rows.map((r) => {
+          const hasForecast = r.hasForecast;
+          const barPct = hasForecast && maxForecast > 0 ? (r.forecastMT / maxForecast) * 100 : 0;
+          const tone = hasForecast ? directionTone(r.direction) : 'neutral';
+          const changeText = hasForecast && r.changePct != null ? formatPctSigned(r.changePct) : '—';
+          return (
+            <li
+              key={r.id}
+              className={`fc-muni-row ${selectedMuni === String(r.id) ? 'fc-muni-row--selected' : ''}`}
+              onClick={() => onSelect(String(r.id))}
+              role="button"
+              tabIndex={0}
+              aria-label={`Focus on ${r.name}`}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(String(r.id)); }
+              }}
+            >
+              <div className="fc-muni-row-top">
+                <span className="fc-muni-name">{r.name}</span>
+                <span className="fc-muni-value">
+                  {hasForecast ? formatMT(r.forecastMT) : 'Insufficient data'}
+                </span>
+              </div>
+              {hasForecast ? (
+                <>
+                  <div className="fc-muni-bar-track">
+                    <div className="fc-muni-bar-fill" style={{ width: `${barPct}%`, backgroundColor: tone === 'good' ? BRAND.green : tone === 'bad' ? STATUS.not_ready : BRAND.ocean }} />
+                  </div>
+                  <div className="fc-muni-row-meta">
+                    <span className={`fc-muni-direction fc-muni-direction--${tone}`} aria-hidden="true" />
+                    <span className="fc-muni-change" style={{ color: tone === 'good' ? BRAND.green : tone === 'bad' ? STATUS.not_ready : 'inherit' }}>{changeText}</span>
+                    <span className="fc-muni-conf">{FORECAST_CONFIDENCE[r.confidence] || r.confidence}</span>
+                    <span className="fc-muni-readiness">{DATA_SUFFICIENCY[r.sufficiency] || r.sufficiency}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="fc-muni-row-meta">
+                  <span className="fc-muni-empty-text">Not enough data — fewer than 6 observed months.</span>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function InnerForecastDashboard() {
   const [municipalities, setMunicipalities] = useState([]);
   const [runs, setRuns] = useState([]);
@@ -125,13 +264,51 @@ function InnerForecastDashboard() {
   const [error, setError] = useState(null);
   const [activeSection, setActiveSection] = useState('summary');
   const [selectedMuni, setSelectedMuni] = useState('all');
+  // Historical Period: 6 / 12 / 24 months or all available data.
   const [recordedWindow, setRecordedWindow] = useState('12');
-  const [forecastHorizon, setForecastHorizon] = useState('12');
+  // Forecast Horizon: 3 / 6 / 12 months (model supports 1–36).
+  const [forecastHorizon, setForecastHorizon] = useState('6');
+  // Production Method: all / solar / cooked / hybrid. These are real values
+  // from ProductionRecord.production_method; the forecast model itself always
+  // uses all approved records — this only narrows the method-share breakdown.
+  const [productionMethod, setProductionMethod] = useState('all');
+  // Province: Pangasinan is the only province covered by this DSS, so the
+  // dropdown is a single-option select. It exists to match the reference
+  // layout; it does not change any data scope.
+  const [province, setProvince] = useState('pangasinan');
 
-  const resetFilters = () => {
-    setRecordedWindow('12');
-    setForecastHorizon('12');
-  };
+  // Automatic filtering: any change to a filter selection re-runs the
+  // descriptive + supply-demand refresh without an Apply button. A
+  // monotonically-increasing token cancels stale responses when the user
+  // changes selections again before the previous request resolves.
+  const autoFilterToken = useRef(0);
+  const runAutoFilter = useCallback(() => {
+    const token = ++autoFilterToken.current;
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      getAdminDescriptive().then((res) => {
+        if (token === autoFilterToken.current) setDescriptive(res);
+      }).catch(() => {
+        if (token === autoFilterToken.current) setDescriptive(null);
+      }),
+      getAdminSupplyDemand().then((res) => {
+        if (token === autoFilterToken.current) setSupplyDemand(res);
+      }).catch(() => {
+        if (token === autoFilterToken.current) setSupplyDemand(null);
+      }),
+    ]).finally(() => {
+      if (token === autoFilterToken.current) setLoading(false);
+    });
+  }, []);
+
+  // selectedMuni is intentionally excluded — it already drives its own
+  // per-scope forecast-runs effect. recordedWindow / forecastHorizon /
+  // productionMethod / province are display filters that only affect the
+  // descriptive method-share breakdown and the filter summary.
+  useEffect(() => {
+    runAutoFilter();
+  }, [recordedWindow, forecastHorizon, productionMethod, province, runAutoFilter]);
 
   /* ---------------- Data loading ---------------- */
 
@@ -179,6 +356,33 @@ function InnerForecastDashboard() {
     const m = municipalities.find((x) => String(x.id) === String(selectedMuni));
     return m ? m.name : '\u2014';
   }, [selectedMuni, municipalities]);
+
+  // Production-method share comes from /admin/analytics/descriptive.methods_share.
+  const productionMethodShare = useMemo(() => {
+    if (!descriptive || !descriptive.methods_share) return [];
+    const rows = descriptive.methods_share.map((r) => ({
+      method: r.method,
+      label: methodName(r.method),
+      volumeMT: Number(r.volume_mt) || 0,
+      sharePct: Number(r.share_pct) || 0,
+    }));
+    if (productionMethod !== 'all') return rows.filter((r) => r.method === productionMethod);
+    return rows;
+  }, [descriptive, productionMethod]);
+
+  const filterSummary = useMemo(() => {
+    const windowPart = recordedWindow === 'all' ? 'all available months' : `the last ${recordedWindow} months`;
+    const methodPart = productionMethodShare.length > 0
+      ? ` (${productionMethodShare.map((r) => `${r.label} ${r.sharePct.toFixed(0)}%`).join(', ')})`
+      : (productionMethod !== 'all' ? ` using the ${methodName(productionMethod)} method only` : '');
+    if (!selectedRun) {
+      return `No forecast is available for ${selectedMuniName} yet. Recorded data shown is ${windowPart}${methodPart}.`;
+    }
+    if (activeSection === 'trajectory') {
+      return `Showing ${windowPart} of records and the next ${forecastHorizon} months of forecast for ${selectedMuniName}${methodPart}.`;
+    }
+    return `Showing the 7 municipalities' latest forecast run, with ${windowPart} of history and a ${forecastHorizon}-month projection${methodPart}.`;
+  }, [activeSection, recordedWindow, forecastHorizon, productionMethod, productionMethodShare, selectedMuniName, selectedRun]);
 
   /* ---------------- Derived data ---------------- */
 
@@ -506,6 +710,21 @@ function InnerForecastDashboard() {
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [outlook, muniForecastProduction]);
 
+  // Ranked comparison panel: forecasted municipalities sort by forecasted
+  // production (highest first); municipalities with no forecast sort after
+  // them, alphabetically. Never treats a missing forecast as zero.
+  const muniForecastPanel = useMemo(() => {
+    return [...muniSummaryTable]
+      .map((r) => ({ ...r }))
+      .sort((a, b) => {
+        const aHas = Boolean(a.hasForecast && a.forecastMT != null);
+        const bHas = Boolean(b.hasForecast && b.forecastMT != null);
+        if (aHas !== bHas) return aHas ? -1 : 1;
+        if (aHas && bHas) return (b.forecastMT || 0) - (a.forecastMT || 0);
+        return a.name.localeCompare(b.name);
+      });
+  }, [muniSummaryTable]);
+
   /* ---------------- Headline sentence (computed before early returns) ---------------- */
 
   const headlineSentence = useMemo(() => {
@@ -541,12 +760,23 @@ function InnerForecastDashboard() {
   // Scope-aware recorded production: All 7 uses /descriptive (which is not
   // subject to the runs query's limit=50 cap); a single municipality uses its
   // own run's history. Both respect the Recorded window dropdown.
-  const kpiRecordedProduction = selectedMuni === 'all'
+  const recordedProductionDisplay = selectedMuni === 'all'
     ? recordedProductionAll7
     : recordedProductionMT;
 
-  // Direction / Confidence as the main KPI value (real label), not "—".
-  const kpiDirectionValue = direction ? directionLabel(direction) : null;
+  // Data readiness comes from the forecast run's own readiness field:
+  // ready (>=24 unique months of history), limited (>=12), not_ready (<12).
+  const kpiReadinessValue = selectedRun ? DATA_SUFFICIENCY[selectedRun.readiness] || selectedRun.readiness : null;
+  const kpiReadinessTone = selectedRun
+    ? (selectedRun.readiness === 'ready' ? 'good' : selectedRun.readiness === 'limited' ? 'neutral' : 'bad')
+    : 'neutral';
+  const kpiReadinessSupporting = selectedRun
+    ? (selectedRun.readiness === 'ready' ? 'Based on at least 24 months of validated history.'
+      : selectedRun.readiness === 'limited' ? 'Based on 12–23 months of validated history.'
+      : 'Fewer than 12 months of validated history.')
+    : 'Not available';
+
+  // Forecast confidence as the main KPI value (real label), not "—".
   const kpiConfidenceValue = forecastConfidence
     ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence)
     : null;
@@ -572,45 +802,38 @@ function InnerForecastDashboard() {
   // No forecast exists for the current scope — neutral message, no button.
   // A failed request is handled by the `error` guard above and never reaches
   // here, so this only fires when the scope genuinely has no forecast.
-  if (!selectedRun) {
+if (!selectedRun) {
     return (
       <div className="admin-single-page forecast-page">
         <PageHeader
           id="admin-forecast-header"
-          variant="sub"
-          title="Forecast &amp; Production Outlook"
-          subtitle={`Chronological forecast story for ${selectedMuniName}.`}
-        >
-          <div className="fc-header-meta">
-            <span className="fc-data-as-of">
-              <span className="fc-meta-label">Data as of</span>
-              <span className="fc-meta-value">
-                {latestRecordMonth ? monthLabel(latestRecordMonth) : na()}
-              </span>
+          variant="clean"
+          className="ui-pageheader--dashboard"
+          title="Forecasting"
+          subtitle="Future production estimates and insights to support better decision-making for the salt industry."
+          actions={
+            <span className="ui-pageheader-chip" aria-label={`Latest forecast data: ${forecastRunDate ? monthLabel(forecastRunDate) : (latestRecordMonth ? monthLabel(latestRecordMonth) : 'no data yet')}`}>
+              <CalendarDays size={14} strokeWidth={1.5} aria-hidden="true" />
+              Data as of {forecastRunDate ? monthLabel(forecastRunDate) : (latestRecordMonth ? monthLabel(latestRecordMonth) : 'No data yet')}
             </span>
-          </div>
-        <div className="fc-filter-row">
-          <label className="fc-filter-label" htmlFor="forecast-recorded-window">Recorded window</label>
-          <Form.Select id="forecast-recorded-window" className="fc-filter-select" value={recordedWindow} onChange={(e) => setRecordedWindow(e.target.value)} aria-label="Recorded production window">
-            <option value="3">Last 3 months</option>
-            <option value="6">Last 6 months</option>
-            <option value="12">Last 12 months</option>
-            <option value="all">All history</option>
-          </Form.Select>
-          <label className="fc-filter-label" htmlFor="forecast-horizon">Forecast horizon</label>
-          <Form.Select id="forecast-horizon" className="fc-filter-select" value={forecastHorizon} onChange={(e) => setForecastHorizon(e.target.value)} aria-label="Forecast horizon">
-            <option value="6">6 months</option>
-            <option value="12">12 months</option>
-          </Form.Select>
-          <label className="fc-filter-label" htmlFor="forecast-muni-scope">Municipality scope</label>
-            <Form.Select id="forecast-muni-scope" className="fc-filter-select" value={selectedMuni} onChange={(e) => setSelectedMuni(e.target.value)} aria-label="Municipality scope">
-              <option value="all">{SCOPE_ALL_LABEL}</option>
-              {municipalities.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </Form.Select>
-          </div>
-        </PageHeader>
+          }
+          filter={
+            <ForecastFilterCard
+              recordedWindow={recordedWindow}
+              onRecordedWindow={setRecordedWindow}
+              forecastHorizon={forecastHorizon}
+              onForecastHorizon={setForecastHorizon}
+              selectedMuni={selectedMuni}
+              municipalities={municipalities}
+              onSelectedMuni={setSelectedMuni}
+              province={province}
+              onProvince={setProvince}
+              productionMethod={productionMethod}
+              onProductionMethod={setProductionMethod}
+              filterSummary={filterSummary}
+            />
+          }
+        />
 
         <div className="fc-empty-forecast">
           <div className="fc-empty-forecast-card">
@@ -628,50 +851,36 @@ function InnerForecastDashboard() {
 
   return (
     <div className="admin-single-page forecast-page">
-      {/* ============ Header ============ */}
+      {/* ============ Unified header + filters container ============ */}
       <PageHeader
         id="admin-forecast-header"
-        variant="sub"
-        title="Forecast &amp; Production Outlook"
-        subtitle={`Chronological forecast story for ${selectedMuniName}. KPIs, trajectory, seasonal cycle, demand comparison, and per-municipality outlook.`}
-      >
-        <div className="fc-header-meta">
-          <span className="fc-data-as-of">
-            <span className="fc-meta-label">Data as of</span>
-            <span className="fc-meta-value">
-              {latestRecordMonth ? monthLabel(latestRecordMonth) : na()}
-            </span>
+        variant="clean"
+        className="ui-pageheader--dashboard"
+        title="Forecasting"
+        subtitle="Future production estimates and insights to support better decision-making for the salt industry."
+        actions={
+          <span className="ui-pageheader-chip" aria-label={`Latest forecast data: ${forecastRunDate ? monthLabel(forecastRunDate) : (latestRecordMonth ? monthLabel(latestRecordMonth) : 'no data yet')}`}>
+            <CalendarDays size={14} strokeWidth={1.5} aria-hidden="true" />
+            Data as of {forecastRunDate ? monthLabel(forecastRunDate) : (latestRecordMonth ? monthLabel(latestRecordMonth) : 'No data yet')}
           </span>
-        </div>
-        <div className="fc-filter-row">
-          {activeSection === 'trajectory' && (
-            <>
-              <label className="fc-filter-label" htmlFor="forecast-recorded-window">Recorded window</label>
-              <Form.Select id="forecast-recorded-window" className="fc-filter-select" value={recordedWindow} onChange={(e) => setRecordedWindow(e.target.value)} aria-label="Recorded production window">
-                <option value="3">Last 3 months</option>
-                <option value="6">Last 6 months</option>
-                <option value="12">Last 12 months</option>
-                <option value="all">All history</option>
-              </Form.Select>
-              <label className="fc-filter-label" htmlFor="forecast-horizon">Forecast horizon</label>
-              <Form.Select id="forecast-horizon" className="fc-filter-select" value={forecastHorizon} onChange={(e) => setForecastHorizon(e.target.value)} aria-label="Forecast horizon">
-                <option value="6">6 months</option>
-                <option value="12">12 months</option>
-              </Form.Select>
-            </>
-          )}
-          <label className="fc-filter-label" htmlFor="forecast-muni-scope">Municipality scope</label>
-          <Form.Select id="forecast-muni-scope" className="fc-filter-select" value={selectedMuni} onChange={(e) => setSelectedMuni(e.target.value)} aria-label="Municipality scope">
-            <option value="all">{SCOPE_ALL_LABEL}</option>
-            {municipalities.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </Form.Select>
-          {activeSection === 'trajectory' && (
-            <button type="button" className="btn btn-sm btn-outline-secondary" onClick={resetFilters}>Reset filters</button>
-          )}
-        </div>
-      </PageHeader>
+        }
+        filter={
+          <ForecastFilterCard
+            recordedWindow={recordedWindow}
+            onRecordedWindow={setRecordedWindow}
+            forecastHorizon={forecastHorizon}
+            onForecastHorizon={setForecastHorizon}
+            selectedMuni={selectedMuni}
+            municipalities={municipalities}
+            onSelectedMuni={setSelectedMuni}
+            province={province}
+            onProvince={setProvince}
+            productionMethod={productionMethod}
+            onProductionMethod={setProductionMethod}
+            filterSummary={filterSummary}
+          />
+        }
+      />
 
       {/* ============ Tab navigation ============ */}
       <div className="fc-nav-wrap">
@@ -680,40 +889,49 @@ function InnerForecastDashboard() {
 
       {/* ============ B. Past to future ============ */}
       <section className="fc-section" role="tabpanel" id="forecast-tabpanel-trajectory" aria-labelledby="forecast-tab-trajectory" hidden={activeSection !== 'trajectory'}>
+
         <div className="fc-section-head">
           <span className="fc-section-chip"><ChartLine size={16} strokeWidth={2} /></span>
           <div>
-            <h2 className="fc-section-title">Production trajectory</h2>
+            <h2 className="fc-section-title">Past to future</h2>
             <p className="fc-section-sub">{headlineSentence}</p>
+          </div>
+        </div>
+
+        <div className="fc-section-head">
+          <span className="fc-section-chip"><ChartLine size={16} strokeWidth={2} /></span>
+          <div>
+            <h2 className="fc-section-title">Forecast Overview</h2>
+            <p className="fc-section-sub">Key indicators and forecast insights for the next ${forecastHorizon} month${forecastHorizon === 1 ? '' : 's'}.</p>
           </div>
         </div>
 
         <KpiGrid columns={5} className="fc-kpi-strip mb-3">
           <KpiCard
             icon={ChartLine}
-            title={label('recordedMt') || 'Recorded production'}
-            value={kpiRecordedProduction != null ? kpiRecordedProduction : null}
-            unit={unit('recordedMt') || 'MT'}
-            supporting={`Sum of approved records, last ${recordedWindow === 'all' ? 'all available' : recordedWindow} months${latestRecordMonth ? ` through ${monthLabel(latestRecordMonth)}` : ''}`}
+            title="Recorded Production"
+            value={recordedProductionDisplay != null ? recordedProductionDisplay : null}
+            unit="MT"
+            supporting={`Sum of approved records, last ${recordedWindow === 'all' ? 'all available' : recordedWindow} months${latestRecordMonth ? ` through ${monthLabel(latestRecordMonth)}` : ''}.`}
             info={definition('recordedMt') + ' Source: approved production records.'}
             loading={kpiLoading}
           />
           <KpiCard
             icon={Target}
-            title={label('forecastTotalMt') || 'Forecast production'}
+            title="Forecasted Total Production"
             value={slicedForecastTotal != null ? slicedForecastTotal : null}
-            unit={unit('forecastTotalMt') || 'MT'}
-            supporting={`Next ${forecastHorizon} month${forecastHorizon === 1 ? '' : 's'}${forecastRunDate ? ` · ${new Date(forecastRunDate).toLocaleDateString()}` : ''}`}
-            info={definition('forecastTotalMt') + ' Source: model forecast run.'}
+            unit="MT"
+            supporting={`Total projected production for the next ${forecastHorizon} month${forecastHorizon === 1 ? '' : 's'}${forecastRunDate ? ` · run ${monthLabel(forecastRunDate)}` : ''}.`}
+            info={definition('forecastTotalMt') + ' Source: model forecast run. This is the forecast total for the selected horizon, not an annual total.'}
             badge={{ text: directionLabel(direction), tone: directionTone(direction) }}
             loading={kpiLoading}
           />
           <KpiCard
             icon={TrendingUp}
-            title={label('changeVsRecentAvgPct') || 'Change vs recent average'}
+            title="Expected Change"
             value={expectedChangePct != null ? expectedChangePct : null}
-            unit={unit('changeVsRecentAvgPct') || '%'}
-            supporting={`Forecast vs recent historical average — ${forecastHorizon === '12' ? 'same run as Direction and Confidence' : '12-month run'}`}
+            unit="%"
+            supporting={`Forecast versus the recent historical average — ${directionLabel(direction).toLowerCase()}.`}
             info={definition('changeVsRecentAvgPct') + ' Source: latest forecast run.'}
             trend={{
               direction: direction === 'increasing' ? 'up' : direction === 'declining' ? 'down' : 'up',
@@ -724,27 +942,29 @@ function InnerForecastDashboard() {
             loading={kpiLoading}
           />
           <KpiCard
-            icon={Activity}
-            title={label('trendDirection') || 'Direction'}
-            value={kpiDirectionValue}
+            icon={ShieldCheck}
+            title="Forecast Confidence"
+            value={kpiConfidenceValue}
             unit={null}
-            supporting={directionLabel(direction)}
-            info={definition('trendDirection') + ' Source: latest forecast run.'}
-            tone={directionTone(direction)}
+            supporting={forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : 'Not available'}
+            info={definition('forecastConfidence') + ' Combines amount of data and past accuracy. Not a statistical confidence level.' + ' Source: latest forecast run.'}
+            tone={forecastConfidence === 'high' ? 'good' : forecastConfidence === 'moderate' ? 'neutral' : 'bad'}
             loading={kpiLoading}
           />
           <KpiCard
-            icon={ShieldCheck}
-            title={label('forecastConfidence') || 'Forecast confidence'}
-            value={kpiConfidenceValue}
+            icon={Activity}
+            title="Data Readiness"
+            value={kpiReadinessValue}
             unit={null}
-            supporting={forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : '—'}
-            info={definition('forecastConfidence') + ' Source: latest forecast run.'}
-            tone={forecastConfidence === 'high' ? 'good' : forecastConfidence === 'moderate' ? 'neutral' : 'bad'}
+            supporting={kpiReadinessSupporting}
+            info={definition('dataSufficiency') + ' Based on the availability and quality of validated historical records.'}
+            tone={kpiReadinessTone}
             loading={kpiLoading}
           />
         </KpiGrid>
 
+        <Row className="g-3">
+          <Col lg={7} md={12}>
         <ChartCard
           icon={ChartLine}
           title="Historical vs Forecast Production"
@@ -855,7 +1075,7 @@ function InnerForecastDashboard() {
           )}
 </ChartCard>
 
-        {forecastPoints.length > 0 && (
+{forecastPoints.length > 0 && (
             <div className="fc-annotation-row">
               <span className="fc-annotation">
                 <TrendingUp size={12} strokeWidth={2} /> Peak forecast: {monthLabel(forecastPoints.reduce((a, b) => (b.forecast > a.forecast ? b : a)).label)} at {formatMT(Math.max(...forecastPoints.map((d) => d.forecast)))} MT
@@ -864,8 +1084,18 @@ function InnerForecastDashboard() {
                 <ArrowDownRight size={12} strokeWidth={2} /> Lowest forecast: {monthLabel(forecastPoints.reduce((a, b) => (b.forecast < a.forecast ? b : a)).label)} at {formatMT(Math.min(...forecastPoints.map((d) => d.forecast)))} MT
               </span>
             </div>
-          )}
-      </section>
+)}
+        </Col>
+
+        <Col lg={5}>
+          <ForecastByMunicipality
+            rows={muniForecastPanel}
+            selectedMuni={selectedMuni}
+            onSelect={setSelectedMuni}
+          />
+        </Col>
+      </Row>
+    </section>
 
       <section className="fc-section" role="tabpanel" id="forecast-tabpanel-seasonal" aria-labelledby="forecast-tab-seasonal" hidden={activeSection !== 'trajectory'} style={{ marginTop: 0 }}>
         <div className="fc-section-head">
@@ -1344,72 +1574,29 @@ function InnerForecastDashboard() {
           </Col>
         </div>
 
-        {/* D4. Municipality forecast summary table */}
-        <div className="row g-3">
-          <Col lg={12}>
-            <Card className="fc-card h-100">
-              <Card.Header className="fc-card-header">
-                <div className="d-flex align-items-center gap-2">
-                  <TableIcon size={16} strokeWidth={2} />
-                  <h5 className="fc-card-title mb-0">Municipality forecast summary</h5>
-                </div>
-              </Card.Header>
-              <Card.Body className="fc-card-body p-0">
-                <div className="fc-table-wrap">
-                  <table className="fc-summary-table">
-                    <thead>
-                      <tr>
-                        <th>Municipality</th>
-                        <th>Forecast production</th>
-                        <th>Change vs recent average</th>
-                        <th>Direction</th>
-                        <th>Forecast confidence</th>
-                        <th>Data sufficiency</th>
-                        <th>Last run</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {muniSummaryTable.length === 0 ? (
-                        <tr>
-                          <td colSpan="7" className="fc-table-empty">No municipality forecast data available.</td>
-                        </tr>
-                      ) : (
-                        muniSummaryTable.map((m) => (
-                          <tr key={m.id}>
-                            <td className="fc-table-name">{m.name}</td>
-                            <td className="fc-table-numeric">
-                              {m.forecastMT != null ? formatMT(m.forecastMT) : na()}
-                            </td>
-                            <td className="fc-table-numeric">
-                              {m.changePct != null ? formatPctSigned(m.changePct) : na()}
-                            </td>
-                            <td className="fc-table-badge">
-                              {m.hasForecast ? (
-                                <span className={`fc-badge fc-badge--${directionTone(m.direction)}`}>{directionLabel(m.direction)}</span>
-                              ) : (
-                                <span className="fc-badge fc-badge--neutral">Not enough data</span>
-                              )}
-                            </td>
-                            <td className="fc-table-badge">
-                              <span className={`fc-badge fc-badge--${m.confidence === 'high' ? 'good' : m.confidence === 'moderate' ? 'neutral' : 'bad'}`}>{FORECAST_CONFIDENCE[m.confidence] || m.confidence}</span>
-                            </td>
-                            <td className="fc-table-badge">
-                              <span className={`fc-badge fc-badge--${m.sufficiency === 'ready' ? 'good' : m.sufficiency === 'limited' ? 'neutral' : 'bad'}`}>{DATA_SUFFICIENCY[m.sufficiency] || m.sufficiency}</span>
-                            </td>
-                            <td className="fc-table-numeric">{m.lastRun}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <ChartCaption tone="info">
-                  Forecast production, change vs recent average, direction, confidence, and data sufficiency per municipality.
-                  {muniNoForecast.length > 0 && ` Municipalities without a forecast (${muniNoForecast.join(', ')}) show "Not enough data".`}
-                </ChartCaption>
-              </Card.Body>
-            </Card>
-          </Col>
+        {/* D4. Forecast by municipality is shown in the two-chart layout
+            (Historical vs Forecast + Forecast by Municipality). The Summary
+            tab keeps the expected-change and year-over-year breakdowns. */}
+
+        {/* Data warnings / reliability */}
+        <div className="fc-reliability-note mt-3">
+          <div className="fc-reliability-card">
+            <div className="fc-reliability-head">
+              <ShieldCheck size={16} strokeWidth={1.5} />
+              <span className="fc-reliability-title">Forecast reliability</span>
+            </div>
+            <ul className="fc-reliability-list">
+              <li>Forecasting is a decision-support feature, not a guarantee of future production.</li>
+              <li>Confidence combines the amount of data and past accuracy — it is not a statistical probability.</li>
+              <li>Data readiness is based on the availability and quality of validated historical records (ready = ≥24 months, limited = 12–23, insufficient = fewer than 12).</li>
+              {hasIncompleteTail && (
+                <li>Recent months may be under-reported; the forecast is anchored to the established seasonal pattern.</li>
+              )}
+              {muniNoForecast.length > 0 && (
+                <li>{muniNoForecast.join(', ')} have no forecast because they have fewer than 6 observed months — more validated records would improve reliability.</li>
+              )}
+            </ul>
+          </div>
         </div>
       </section>
     </div>
