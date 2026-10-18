@@ -11,7 +11,8 @@ import {
 } from 'lucide-react';
 import {
   getMunicipalityOutlook, getAdminMunicipalities,
-  getAdminSupplyDemand, getAdminTrends, getAdminMonths, getAdminPredictive,
+  getAdminSupplyDemand, getAdminTrends, getAdminMonths, getAdminDescriptive,
+  getAdminPredictive,
   getForecastRuns,
 } from '../../services/dataService';
 import { SkeletonBlock, SkeletonCards, SkeletonChart } from '../Skeleton';
@@ -118,6 +119,7 @@ function InnerForecastDashboard() {
   const [supplyDemand, setSupplyDemand] = useState(null);
   const [trends, setTrends] = useState([]);
   const [adminMonths, setAdminMonths] = useState([]);
+  const [descriptive, setDescriptive] = useState(null);
   const [predictive, setPredictive] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -136,6 +138,7 @@ function InnerForecastDashboard() {
       getAdminSupplyDemand().then((res) => setSupplyDemand(res)).catch(() => setSupplyDemand(null)),
       getAdminTrends().then((res) => setTrends(res.municipalities || [])).catch(() => setTrends([])),
       getAdminMonths().then((res) => setAdminMonths(res.months || [])).catch(() => setAdminMonths([])),
+      getAdminDescriptive().then((res) => setDescriptive(res)).catch(() => setDescriptive(null)),
       getAdminPredictive().then((res) => setPredictive(res)).catch(() => setPredictive(null)),
     ]).finally(() => setLoading(false));
   }, []);
@@ -173,10 +176,46 @@ function InnerForecastDashboard() {
 
   /* ---------------- Derived data ---------------- */
 
+  // "Data as of" and the historical series for scope "All 7 municipalities"
+  // come from /api/admin/analytics/descriptive (no municipality_id), which
+  // aggregates approved records across all 7 municipalities. A single
+  // municipality scope keeps using that municipality's own run.
   const latestRecordMonth = useMemo(() => {
+    if (selectedMuni === 'all' && descriptive && descriptive.latest_record_month) {
+      return descriptive.latest_record_month;
+    }
     if (!adminMonths || adminMonths.length === 0) return null;
     return adminMonths[adminMonths.length - 1];
-  }, [adminMonths]);
+  }, [selectedMuni, descriptive, adminMonths]);
+
+  // Province-wide recorded production (All 7), respecting the Recorded window
+  // dropdown. Source: /descriptive monthly_series.
+  const recordedProductionAll7 = useMemo(() => {
+    if (!descriptive || !descriptive.monthly_series) return null;
+    const windowMonths = recordedWindow === 'all' ? Infinity : Number(recordedWindow);
+    const recent = descriptive.monthly_series.slice(-windowMonths);
+    return recent.reduce((sum, m) => sum + (Number(m.total_mt) || 0), 0);
+  }, [descriptive, recordedWindow]);
+
+  // Province-wide monthly history for the trajectory chart (All 7). Joins the
+  // descriptive series to the province-wide forecast points so the chart reads
+  // past-to-future in one continuous line. Limited by the Recorded window
+  // dropdown (3/6/12/24/36 months or All), which also drives the Recorded
+  // production KPI for this scope.
+  const provinceHistorySeries = useMemo(() => {
+    if (!descriptive || !descriptive.monthly_series) return [];
+    const windowMonths = recordedWindow === 'all' ? Infinity : Number(recordedWindow);
+    const recent = descriptive.monthly_series.slice(-windowMonths);
+    return recent.map((m) => ({
+      label: m.month,
+      labelShort: monthLabel(m.month),
+      historical: Number(m.total_mt) || 0,
+      forecast: null,
+      lower: null,
+      upper: null,
+      isForecast: false,
+    }));
+  }, [descriptive, recordedWindow]);
 
   // Province-wide forecast production (always the full 12-month projection,
   // regardless of the municipality scope). Source: /api/admin/analytics/
@@ -210,6 +249,32 @@ function InnerForecastDashboard() {
 
   const chartData = useMemo(() => {
     if (!selectedRun || !selectedRun.points) return [];
+    // Scope "All 7": the province-wide run has no historical points of its
+    // own, so the trajectory is built by joining the descriptive monthly
+    // series to the run's forecast points. A single municipality scope uses
+    // that municipality's own run, which carries its own history.
+    if (selectedMuni === 'all' && provinceHistorySeries.length > 0) {
+      const fc = selectedRun.points.map((p) => ({
+        label: p.period_label,
+        labelShort: monthLabel(p.period_label),
+        historical: null,
+        forecast: p.is_forecast ? (p.predicted_value != null ? p.predicted_value : null) : null,
+        lower: p.lower_bound != null ? p.lower_bound : null,
+        upper: p.upper_bound != null ? p.upper_bound : null,
+        isForecast: p.is_forecast,
+      }));
+      const histLabels = new Set(provinceHistorySeries.map((d) => d.label));
+      const overlap = fc.filter((d) => histLabels.has(d.label));
+      if (overlap.length > 0) {
+        // Overlapping labels are ambiguous; prefer the run's own forecast
+        // values and drop the descriptive historical duplicates so the
+        // historical line does not continue into the forecast period.
+        const overlapSet = new Set(overlap.map((d) => d.label));
+        const cleaned = provinceHistorySeries.filter((d) => !overlapSet.has(d.label));
+        return [...cleaned, ...fc];
+      }
+      return [...provinceHistorySeries, ...fc];
+    }
     return selectedRun.points.map((p) => ({
       label: p.period_label,
       labelShort: monthLabel(p.period_label),
@@ -219,7 +284,7 @@ function InnerForecastDashboard() {
       upper: p.upper_bound != null ? p.upper_bound : null,
       isForecast: p.is_forecast,
     }));
-  }, [selectedRun]);
+  }, [selectedRun, selectedMuni, provinceHistorySeries]);
 
   const historyPoints = chartData.filter((d) => !d.isForecast && d.historical != null);
   const forecastPoints = chartData.filter((d) => d.isForecast && d.forecast != null);
@@ -450,6 +515,19 @@ function InnerForecastDashboard() {
 
   const kpiLoading = loading || !selectedRun;
 
+  // Scope-aware recorded production: All 7 uses /descriptive (which is not
+  // subject to the runs query's limit=50 cap); a single municipality uses its
+  // own run's history. Both respect the Recorded window dropdown.
+  const kpiRecordedProduction = selectedMuni === 'all'
+    ? recordedProductionAll7
+    : recordedProductionMT;
+
+  // Direction / Confidence as the main KPI value (real label), not "—".
+  const kpiDirectionValue = direction ? directionLabel(direction) : null;
+  const kpiConfidenceValue = forecastConfidence
+    ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence)
+    : null;
+
   /* ---------------- Loading / error states ---------------- */
 
   if (loading) {
@@ -527,7 +605,7 @@ function InnerForecastDashboard() {
         id="admin-forecast-header"
         variant="sub"
         title="Forecast &amp; Production Outlook"
-        subtitle={`Chronological forecast story for ${selectedMuniName}. Data-backed KPIs, trajectory, demand check, and per-municipality outlook.`}
+        subtitle={`Chronological forecast story for ${selectedMuniName}. KPIs, trajectory, seasonal cycle, demand comparison, and per-municipality outlook.`}
       >
         <div className="fc-header-meta">
           <span className="fc-data-as-of">
@@ -574,7 +652,7 @@ function InnerForecastDashboard() {
           <KpiCard
             icon={ChartLine}
             title={label('recordedMt') || 'Recorded production'}
-            value={recordedProductionMT != null ? recordedProductionMT : null}
+            value={kpiRecordedProduction != null ? kpiRecordedProduction : null}
             unit={unit('recordedMt') || 'MT'}
             supporting={`Sum of approved records, last ${recordedWindow === 'all' ? 'all available' : recordedWindow} months${latestRecordMonth ? ` through ${monthLabel(latestRecordMonth)}` : ''}`}
             info={definition('recordedMt') + ' Source: approved production records.'}
@@ -585,7 +663,7 @@ function InnerForecastDashboard() {
             title={label('forecastTotalMt') || 'Forecast production'}
             value={forecastProductionMT != null ? forecastProductionMT : null}
             unit={unit('forecastTotalMt') || 'MT'}
-            supporting={`Next 12 months${forecastRunDate ? ` · ${new Date(forecastRunDate).toLocaleDateString()}` : ''}`}
+            supporting={`Next ${forecastHorizon} month${forecastHorizon === 1 ? '' : 's'}${forecastRunDate ? ` · ${new Date(forecastRunDate).toLocaleDateString()}` : ''}`}
             info={definition('forecastTotalMt') + ' Source: model forecast run.'}
             badge={{ text: directionLabel(direction), tone: directionTone(direction) }}
             loading={kpiLoading}
@@ -595,7 +673,7 @@ function InnerForecastDashboard() {
             title={label('changeVsRecentAvgPct') || 'Change vs recent average'}
             value={expectedChangePct != null ? expectedChangePct : null}
             unit={unit('changeVsRecentAvgPct') || '%'}
-            supporting={`Forecast vs recent historical average`}
+            supporting={`Forecast vs recent historical average — same run as Direction and Confidence`}
             info={definition('changeVsRecentAvgPct') + ' Source: latest forecast run.'}
             trend={{
               direction: direction === 'increasing' ? 'up' : direction === 'declining' ? 'down' : 'up',
@@ -608,21 +686,21 @@ function InnerForecastDashboard() {
           <KpiCard
             icon={Activity}
             title={label('trendDirection') || 'Direction'}
-            value={na()}
+            value={kpiDirectionValue}
             unit={null}
             supporting={directionLabel(direction)}
-            info={definition('trendDirection')}
-            badge={{ text: directionLabel(direction), tone: directionTone(direction) }}
+            info={definition('trendDirection') + ' Source: latest forecast run.'}
+            tone={directionTone(direction)}
             loading={kpiLoading}
           />
           <KpiCard
             icon={ShieldCheck}
             title={label('forecastConfidence') || 'Forecast confidence'}
-            value={na()}
+            value={kpiConfidenceValue}
             unit={null}
             supporting={forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : '—'}
             info={definition('forecastConfidence') + ' Source: latest forecast run.'}
-            badge={{ text: forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : '—', tone: forecastConfidence === 'high' ? 'good' : forecastConfidence === 'moderate' ? 'neutral' : 'bad' }}
+            tone={forecastConfidence === 'high' ? 'good' : forecastConfidence === 'moderate' ? 'neutral' : 'bad'}
             loading={kpiLoading}
           />
         </KpiGrid>
@@ -656,7 +734,7 @@ function InnerForecastDashboard() {
           ) : (
             <>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 20, right: 24, bottom: 24, left: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 36, right: 24, bottom: 24, left: 0 }}>
                 <defs>
                   <linearGradient id="fcBandGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={BRAND.ocean} stopOpacity={0.20} />
@@ -768,23 +846,43 @@ function InnerForecastDashboard() {
               Dry months (Jan–Jun) typically show higher output; rainy months (Jul–Dec) lower. The navy marker shows the latest month with approved records.
             </ChartCaption>
           }
-        >
+>
           {(() => {
-            const monthTotals = {};
-            const monthCounts = {};
-            historyPoints.forEach((d) => {
-              const m = parseInt(d.label.slice(5, 7), 10);
-              if (!monthTotals[m]) { monthTotals[m] = 0; monthCounts[m] = 0; }
-              monthTotals[m] += d.historical;
-              monthCounts[m] += 1;
-            });
-            const series = [];
-            for (let m = 1; m <= 12; m++) {
-              if (monthCounts[m] > 0) {
-                series.push({ month: m, label: MONTH_SHORT[m - 1], value: monthTotals[m] / monthCounts[m] });
-              } else {
-                series.push({ month: m, label: MONTH_SHORT[m - 1], value: null });
+            // Scope "All 7": use the descriptive seasonal pattern (average by
+            // calendar month over complete years), which is the same source as
+            // the trajectory's historical line. A single municipality scope
+            // keeps re-averaging that municipality's own run history.
+            let series = [];
+            if (selectedMuni === 'all' && descriptive && descriptive.seasonal_pattern) {
+              series = descriptive.seasonal_pattern.map((s) => ({
+                month: s.month,
+                label: s.month_name || MONTH_SHORT[s.month - 1],
+                value: s.avg_mt != null ? s.avg_mt : null,
+              }));
+            } else {
+              const monthTotals = {};
+              const monthCounts = {};
+              historyPoints.forEach((d) => {
+                const m = parseInt(d.label.slice(5, 7), 10);
+                if (!monthTotals[m]) { monthTotals[m] = 0; monthCounts[m] = 0; }
+                monthTotals[m] += d.historical;
+                monthCounts[m] += 1;
+              });
+              for (let m = 1; m <= 12; m++) {
+                if (monthCounts[m] > 0) {
+                  series.push({ month: m, label: MONTH_SHORT[m - 1], value: monthTotals[m] / monthCounts[m] });
+                } else {
+                  series.push({ month: m, label: MONTH_SHORT[m - 1], value: null });
+                }
               }
+            }
+            if (series.length === 0 || series.every((s) => s.value == null)) {
+              return (
+                <div className="fc-empty-state">
+                  <CalendarDays size={24} strokeWidth={2} />
+                  <p>No seasonal data available for this selection yet.</p>
+                </div>
+              );
             }
             // Current month = the calendar month of the latest approved record,
             // not the wall-clock month. The seasonal average is built from
@@ -797,7 +895,7 @@ function InnerForecastDashboard() {
             })();
             return (
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={series} margin={{ top: 20, right: 20, bottom: 24, left: 0 }}>
+                <ComposedChart data={series} margin={{ top: 24, right: 20, bottom: 24, left: 0 }}>
                   <defs>
                     <linearGradient id="fcSeasonGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={BRAND.gold} stopOpacity={0.30} />
@@ -849,7 +947,7 @@ function InnerForecastDashboard() {
               </ResponsiveContainer>
             );
           })()}
-</ChartCard>
+        </ChartCard>
 
         {/* Supply-demand gap insight — one compact card, province-wide only.
             The 12-point rule hides % covered and the verdict when the forecast

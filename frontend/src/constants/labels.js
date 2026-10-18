@@ -216,8 +216,10 @@ export const FORECAST_METHOD_ACRONYMS = {
 };
 
 export const DATA_SUFFICIENCY = {
+  ready: "Ready",
   sufficient: "Sufficient",
-  limited: "Limited",
+  limited: "Limited data",
+  not_ready: "Not enough data",
   insufficient: "Insufficient",
 };
 

@@ -232,6 +232,10 @@ export function getAdminTrends() {
   return api('/admin/trends');
 }
 
+export function getAdminDescriptive() {
+  return api('/admin/analytics/descriptive');
+}
+
 export function getAdminPredictive() {
   return api('/admin/analytics/predictive');
 }
