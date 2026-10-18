@@ -441,9 +441,9 @@ function InnerForecastDashboard() {
     }
     const covered = demandCoveredPct != null ? demandCoveredPct.toFixed(1) + '%' : 'n/a';
     if (demandShortfallMT <= 0) {
-      return `Assumption: Forecast production meets or exceeds salt demand. Forecast covers ${covered} of demand. Gap = salt demand − forecast production.`;
+      return `Assumption: Forecast production meets or exceeds salt demand. Forecast covers ${covered} of demand. Gap = salt demand − forecast production. Source: DOST NICER / ASIN Center benchmark, 2026.`;
     }
-    return `Assumption: Forecast production is below salt demand; gap = salt demand − forecast production. Forecast covers ${covered} of demand.`;
+    return `Assumption: Forecast production is below salt demand; gap = salt demand − forecast production. Forecast covers ${covered} of demand. Source: DOST NICER / ASIN Center benchmark, 2026.`;
   }, [demandShortfallMT, demandCoveredPct]);
 
   const kpiLoading = loading || !selectedRun;
@@ -842,7 +842,7 @@ caption={
                     <div className="fc-demand-value">
                       {demandBenchmark != null ? formatMT(demandBenchmark) : na()}
                     </div>
-                    <div className="fc-demand-source">{demandSource ? sourceLine('demand_benchmarks', `provincial, year ${demandSource.year} (${demandSource.sourceName})`) : '\u2014'}</div>
+                    <div className="fc-demand-source">{demandSource ? `Source: DOST NICER / ASIN Center benchmark, ${demandSource.year} (${demandSource.sourceName})` : '\u2014'}</div>
                   </div>
                 </div>
                 <div className="fc-progress-wrap">
@@ -865,12 +865,12 @@ caption={
                     demandShortfallMT <= 0 ? (
                       <div className="fc-verdict-surplus">
                         <span className="fc-verdict-icon">✓</span>
-                        <span className="fc-verdict-text">Surplus: {formatMT(Math.abs(demandShortfallMT))}</span>
+                        <span className="fc-verdict-text">Surplus: {formatMT(Math.abs(demandShortfallMT))} MT</span>
                       </div>
                     ) : (
                       <div className="fc-verdict-shortfall">
                         <span className="fc-verdict-icon">!</span>
-                        <span className="fc-verdict-text">Demand shortfall: {formatMT(demandShortfallMT)}</span>
+                        <span className="fc-verdict-text">Demand shortfall: {formatMT(demandShortfallMT)} MT</span>
                       </div>
                     )
                   ) : (
@@ -892,14 +892,14 @@ caption={
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
                         data={[
-                          { name: 'Forecast production', value: forecastProductionMT != null ? forecastProductionMT : 0, fill: BRAND.gold },
+                          { name: 'Forecast production', value: provinceForecastMT != null ? provinceForecastMT : 0, fill: BRAND.gold },
                           { name: 'Salt demand', value: demandBenchmark != null ? demandBenchmark : 0, fill: BRAND.ocean },
                         ]}
                         layout="vertical"
-                        margin={{ top: 20, right: 20, bottom: 20, left: 90 }}
+                        margin={{ top: 20, right: 24, bottom: 20, left: 90 }}
                       >
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--ui-chart-grid)" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${Math.round(v).toLocaleString()}`} />
+                        <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${Math.round(v).toLocaleString()} MT`} />
                         <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={90} />
                         <Tooltip
                           content={({ active, payload }) => {
@@ -909,14 +909,14 @@ caption={
                               <div className="fc-tooltip">
                                 <div className="fc-tooltip-label">{d.name}</div>
                                 <div className="fc-tooltip-row">
-                                  <span>Volume</span><b>{formatMT(d.value)}</b>
+                                  <span>Volume</span><b>{formatMT(d.value)} MT</b>
                                 </div>
-                                <div className="fc-tooltip-source">{sourceLine(d.name === 'Salt demand' ? 'demand_benchmarks' : 'forecast_points', d.name === 'Salt demand' ? 'provincial benchmark' : `run #${selectedRun?.id}`)}</div>
+                                <div className="fc-tooltip-source">Source: forecast production = province-wide forecast run; salt demand = DOST NICER / ASIN Center benchmark, 2026.</div>
                               </div>
                             );
                           }}
                         />
-                        <Bar dataKey="value" name="Volume" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                        <Bar dataKey="value" name="Volume" radius={[0, 4, 4, 0]} isAnimationActive={false}>
                           {[
                             { fill: BRAND.gold },
                             { fill: BRAND.ocean },
@@ -926,9 +926,6 @@ caption={
                         </Bar>
                       </BarChart>
                     </ResponsiveContainer>
-                  </div>
-                  <div className="fc-stacked-caption mt-2">
-                    Small stacked bar comparing forecast production against salt demand (MT).
                   </div>
                 </div>
               </Card.Body>
