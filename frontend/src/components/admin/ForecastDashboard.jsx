@@ -290,21 +290,80 @@ function InnerForecastDashboard() {
     return (provinceForecastMT / demandBenchmark) * 100;
   }, [demandBenchmark, provinceForecastMT]);
 
-  const muniExpectedChange = useMemo(() => {
+  const muniForecastProduction = useMemo(() => {
+    // Per-municipality forecast production = sum of run.points where
+    // is_forecast=true, from each municipality's NEWEST run. Computed from
+    // the runs already fetched (provinceRuns); no extra API call needed.
+    const latestByMuni = {};
+    provinceRuns.forEach((r) => {
+      if (r.municipality_id == null) return;
+      const cur = latestByMuni[r.municipality_id];
+      if (!cur || new Date(r.created_at || 0) > new Date(cur.created_at || 0)) {
+        latestByMuni[r.municipality_id] = r;
+      }
+    });
+    const out = {};
+    Object.entries(latestByMuni).forEach(([mid, run]) => {
+      const sum = (run.points || [])
+        .filter((p) => p.is_forecast)
+        .reduce((s, p) => s + (Number(p.predicted_value) || 0), 0);
+      out[Number(mid)] = sum;
+    });
+    return out;
+  }, [provinceRuns]);
+
+  // Shared, consistent municipality order used by BOTH the "Expected change"
+  // chart and the "Year-over-year change" chart. Forecasted municipalities sort
+  // by expected change (highest first); municipalities with no forecast sort
+  // after them, alphabetically.
+  const muniOrder = useMemo(() => {
     return [...outlook]
-      .filter((o) => o.expected_change_pct !== null && o.expected_change_pct !== undefined)
       .map((o) => ({
-        name: o.municipality_name,
         id: o.municipality_id,
+        name: o.municipality_name,
         change: o.expected_change_pct,
-        trend: directionFromPct(o.expected_change_pct),
-        readiness: o.readiness,
-        reliability: o.reliability,
-        algorithm: o.algorithm,
-        lastRunAt: o.last_run_at,
+        hasForecast: o.expected_change_pct != null && o.expected_change_pct !== undefined,
       }))
-      .sort((a, b) => b.change - a.change);
+      .sort((a, b) => {
+        if (a.hasForecast !== b.hasForecast) return a.hasForecast ? -1 : 1;
+        if (a.hasForecast) return b.change - a.change;
+        return a.name.localeCompare(b.name);
+      });
   }, [outlook]);
+
+  const muniExpectedChange = useMemo(() => {
+    return muniOrder
+      .filter((o) => o.hasForecast)
+      .map((o) => {
+        const outlookRow = outlook.find((x) => x.municipality_id === o.id);
+        return {
+          name: o.name,
+          id: o.id,
+          change: o.change,
+          trend: directionFromPct(o.change),
+          readiness: outlookRow ? outlookRow.readiness : null,
+          reliability: outlookRow ? outlookRow.reliability : null,
+          algorithm: outlookRow ? outlookRow.algorithm : null,
+          lastRunAt: outlookRow ? outlookRow.last_run_at : null,
+        };
+      });
+  }, [muniOrder, outlook]);
+
+  // Combined dataset for the Expected change chart: forecasted municipalities
+  // (sorted by change) followed by municipalities with no forecast, shown as
+  // gray dashed "No data" bars so every municipality appears in one chart.
+  const muniExpectedChangeAll = useMemo(() => {
+    const rows = muniExpectedChange.map((o) => ({
+      name: o.name,
+      id: o.id,
+      change: o.change,
+      trend: o.trend,
+    }));
+    muniOrder
+      .filter((o) => !o.hasForecast)
+      .forEach((o) => rows.push({ name: o.name, id: o.id, change: null, trend: 'noData' }));
+    return rows;
+  }, [muniExpectedChange, muniOrder]);
 
   const muniNoForecast = useMemo(() => {
     return [...outlook]
@@ -313,66 +372,70 @@ function InnerForecastDashboard() {
   }, [outlook]);
 
   const needsAttention = useMemo(() => {
-    return [...outlook].filter((o) => {
-      const dir = directionFromPct(o.expected_change_pct);
-      const lowConf = o.reliability === 'low';
-      const incomplete = o.readiness === 'not_ready' || o.readiness === 'limited';
-      return dir === 'declining' || lowConf || incomplete;
-    }).map((o) => {
-      const reasons = [];
-      const dir = directionFromPct(o.expected_change_pct);
-      if (dir === 'declining') reasons.push('Declining direction');
-      if (o.reliability === 'low') reasons.push('Low forecast confidence');
-      if (o.readiness === 'not_ready') reasons.push('Insufficient data');
-      else if (o.readiness === 'limited') reasons.push('Limited data');
-      return {
-        name: o.municipality_name,
-        id: o.municipality_id,
-        change: o.expected_change_pct,
-        trend: dir,
-        readiness: o.readiness,
-        reliability: o.reliability,
-        reasons,
-      };
-    });
+    return [...outlook]
+      .filter((o) => {
+        const dir = directionFromPct(o.expected_change_pct);
+        const lowConf = o.reliability === 'low';
+        const noData = o.expected_change_pct == null || o.expected_change_pct === undefined;
+        return dir === 'declining' || lowConf || noData;
+      })
+      .map((o) => {
+        const reasons = [];
+        const dir = directionFromPct(o.expected_change_pct);
+        if (dir === 'declining') reasons.push('Declining forecast');
+        if (o.reliability === 'low') reasons.push('Low forecast confidence');
+        if (o.expected_change_pct == null || o.expected_change_pct === undefined) reasons.push('Not enough data');
+        return {
+          name: o.municipality_name,
+          id: o.municipality_id,
+          change: o.expected_change_pct,
+          trend: dir,
+          readiness: o.readiness,
+          reliability: o.reliability,
+          reasons,
+        };
+      });
   }, [outlook]);
 
   const yoyRows = useMemo(() => {
-    return (trends || [])
-      .map((m) => ({
-        name: m.name,
-        changePct: m.changePct != null ? m.changePct : null,
-        current: m.current,
-        previous: m.previous,
-        hasData: m.changePct != null && m.current != null && m.previous != null,
-      }))
-      .sort((a, b) => {
-        if (!a.hasData && !b.hasData) return 0;
-        if (!a.hasData) return 1;
-        if (!b.hasData) return -1;
-        return b.changePct - a.changePct;
-      });
-  }, [trends]);
+    // Same municipality order as the Expected change chart (muniOrder).
+    const trendByName = {};
+    (trends || []).forEach((m) => { trendByName[m.name] = m; });
+    return muniOrder.map((o) => {
+      const t = trendByName[o.name];
+      if (!t) {
+        return { name: o.name, changePct: null, current: null, previous: null, hasData: false };
+      }
+      return {
+        name: o.name,
+        changePct: t.changePct != null ? t.changePct : null,
+        current: t.current,
+        previous: t.previous,
+        hasData: t.changePct != null && t.current != null && t.previous != null,
+      };
+    });
+  }, [muniOrder, trends]);
 
   const muniSummaryTable = useMemo(() => {
     return [...outlook].map((o) => {
       const dir = directionFromPct(o.expected_change_pct);
       const conf = o.reliability || 'low';
       const suff = o.readiness || 'not_ready';
+      const hasForecast = o.expected_change_pct != null && o.expected_change_pct !== undefined;
       return {
         name: o.municipality_name,
         id: o.municipality_id,
-        forecastMT: null,
-        changePct: o.expected_change_pct,
+        forecastMT: hasForecast ? (muniForecastProduction[o.municipality_id] ?? null) : null,
+        changePct: hasForecast ? o.expected_change_pct : null,
         direction: dir,
         confidence: conf,
         sufficiency: suff,
         method: o.algorithm || 'none',
         lastRun: o.last_run_at ? new Date(o.last_run_at).toLocaleDateString() : '\u2014',
-        hasForecast: o.expected_change_pct != null,
+        hasForecast,
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [outlook]);
+  }, [outlook, muniForecastProduction]);
 
   /* ---------------- Actions ---------------- */
 
@@ -968,12 +1031,24 @@ caption={
                         type="number"
                         tick={{ fontSize: 11 }}
                         tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`}
+                        domain={['auto', 'auto']}
                       />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={90} />
                       <Tooltip
                         content={({ active, payload }) => {
                           if (!active || !payload || payload.length === 0) return null;
                           const d = payload[0].payload;
+                          if (d.trend === 'noData') {
+                            return (
+                              <div className="fc-tooltip">
+                                <div className="fc-tooltip-label">{d.name}</div>
+                                <div className="fc-tooltip-row">
+                                  <span>Status</span><b>Not enough data</b>
+                                </div>
+                                <div className="fc-tooltip-source">No forecast generated yet — fewer than 6 observed months. Run a forecast for this municipality first.</div>
+                              </div>
+                            );
+                          }
                           return (
                             <div className="fc-tooltip">
                               <div className="fc-tooltip-label">{d.name}</div>
@@ -983,19 +1058,38 @@ caption={
                               <div className="fc-tooltip-row">
                                 <span>Direction</span><b>{directionLabel(d.trend)}</b>
                               </div>
-                              <div className="fc-tooltip-row">
-                                <span>Readiness</span><b>{d.readiness || '\u2014'}</b>
-                              </div>
-                              <div className="fc-tooltip-source">{sourceLine('forecast_runs', `municipality ${d.name}, latest run`)}</div>
+                              <div className="fc-tooltip-source">Source: latest forecast run per municipality.</div>
                             </div>
                           );
                         }}
                       />
-                      <Bar dataKey="change" name="Expected change (%)" maxBarSize={24} isAnimationActive={false}>
-                        {muniExpectedChange.map((entry, i) => (
+                      <Bar
+                        dataKey="change"
+                        name="Expected change (%)"
+                        maxBarSize={24}
+                        isAnimationActive={false}
+                        label={({ x, y, width, height, value }) => {
+                          if (value == null || value === 0) return null;
+                          const isPos = value > 0;
+                          return (
+                            <text
+                              x={isPos ? (x + width + 4) : (x - 4)}
+                              y={y + height / 2}
+                              textAnchor={isPos ? 'start' : 'end'}
+                              dominantBaseline="central"
+                              fontSize={11}
+                              fontWeight={700}
+                              fill={isPos ? BRAND.green : STATUS.not_ready}
+                            >{value > 0 ? '+' : ''}{value.toFixed(1)}%</text>
+                          );
+                        }}
+                      >
+                        {muniExpectedChangeAll.map((entry, i) => (
                           <Cell
                             key={`muni-${i}`}
-                            fill={entry.trend === 'increasing' ? BRAND.green : entry.trend === 'declining' ? STATUS.not_ready : '#adb5bd'}
+                            fill={entry.trend === 'increasing' ? BRAND.green : entry.trend === 'declining' ? STATUS.not_ready : entry.trend === 'noData' ? '#e2e8f0' : '#adb5bd'}
+                            stroke={entry.trend === 'noData' ? '#adb5bd' : undefined}
+                            strokeDasharray={entry.trend === 'noData' ? '4 3' : undefined}
                             radius={[0, 6, 6, 0]}
                           />
                         ))}
@@ -1073,60 +1167,79 @@ caption={
               <Card.Body className="fc-card-body p-0">
                 <div style={{ height: 260 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={yoyRows}
-                      layout="vertical"
-                      margin={{ top: 10, right: 20, bottom: 10, left: 90 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--ui-chart-grid)" horizontal={false} />
-                      <ReferenceLine x={0} stroke="#6c757d" strokeWidth={1} />
-                      <XAxis
-                        type="number"
-                        tick={{ fontSize: 11 }}
-                        tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`}
-                      />
-                      <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={90} />
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (!active || !payload || payload.length === 0) return null;
-                          const d = payload[0].payload;
-                          if (!d.hasData) {
-                            return (
-                              <div className="fc-tooltip">
-                                <div className="fc-tooltip-label">{d.name}</div>
-                                <div className="fc-tooltip-row">
-                                  <span>Status</span><b>Incomplete data</b>
-                                </div>
-                                <div className="fc-tooltip-source">{sourceLine('production_records', "status='approved', last 12 vs previous 12 months")}</div>
-                              </div>
-                            );
-                          }
-                          return (
-                            <div className="fc-tooltip">
-                              <div className="fc-tooltip-label">{d.name}</div>
-                              <div className="fc-tooltip-row">
-                                <span>Last 12 months</span><b>{formatMT(d.current)}</b>
-                              </div>
-                              <div className="fc-tooltip-row">
-                                <span>Previous 12 months</span><b>{formatMT(d.previous)}</b>
-                              </div>
-                              <div className="fc-tooltip-row">
-                                <span>YoY change</span><b>{formatPctSigned(d.changePct)}</b>
-                              </div>
-                              <div className="fc-tooltip-source">{sourceLine('production_records', "status='approved', last 12 complete vs previous 12 complete months")}</div>
-                            </div>
-                          );
-                        }}
-                      />
-                      <Bar dataKey="changePct" name="YoY change (%)" maxBarSize={22} isAnimationActive={false}>
-                        {yoyRows.map((m, i) => (
-                          <Cell
-                            key={`yoy-${i}`}
-                            fill={!m.hasData ? '#adb5bd' : m.changePct >= 0 ? BRAND.green : STATUS.not_ready}
-                            radius={[0, 6, 6, 0]}
-                          />
-                        ))}
-                      </Bar>
+<BarChart
+                       data={yoyRows}
+                       layout="vertical"
+                       margin={{ top: 10, right: 48, bottom: 10, left: 90 }}
+                     >
+                       <CartesianGrid strokeDasharray="3 3" stroke="var(--ui-chart-grid)" horizontal={false} />
+                       <ReferenceLine x={0} stroke="#6c757d" strokeWidth={1.5} />
+                       <XAxis
+                         type="number"
+                         tick={{ fontSize: 11 }}
+                         tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`}
+                         domain={['auto', 'auto']}
+                       />
+                       <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={90} />
+                       <Tooltip
+                         content={({ active, payload }) => {
+                           if (!active || !payload || payload.length === 0) return null;
+                           const d = payload[0].payload;
+                           if (!d.hasData) {
+                             return (
+                               <div className="fc-tooltip">
+                                 <div className="fc-tooltip-label">{d.name}</div>
+                                 <div className="fc-tooltip-row">
+                                   <span>Status</span><b>Incomplete data</b>
+                                 </div>
+                                 <div className="fc-tooltip-source">Not enough complete months for a valid year-over-year comparison.</div>
+                               </div>
+                             );
+                           }
+                           return (
+                             <div className="fc-tooltip">
+                               <div className="fc-tooltip-label">{d.name}</div>
+                               <div className="fc-tooltip-row">
+                                 <span>Last 12 months</span><b>{formatMT(d.current)} MT</b>
+                               </div>
+                               <div className="fc-tooltip-row">
+                                 <span>Previous 12 months</span><b>{formatMT(d.previous)} MT</b>
+                               </div>
+                               <div className="fc-tooltip-row">
+                                 <span>YoY change</span><b>{formatPctSigned(d.changePct)}</b>
+                               </div>
+                               <div className="fc-tooltip-source">Source: approved production records, last 12 complete months vs previous 12 complete months.</div>
+                             </div>
+                           );
+                         }}
+                       />
+                       <Bar dataKey="changePct" name="YoY change (%)" maxBarSize={22} isAnimationActive={false}
+                         label={({ x, y, width, height, value }) => {
+                           if (value == null) return null;
+                           const isPos = value > 0;
+                           return (
+                             <text
+                               x={isPos ? (x + width + 4) : (x - 4)}
+                               y={y + height / 2}
+                               textAnchor={isPos ? 'start' : 'end'}
+                               dominantBaseline="central"
+                               fontSize={11}
+                               fontWeight={700}
+                               fill={isPos ? BRAND.green : STATUS.not_ready}
+                             >{value > 0 ? '+' : ''}{value.toFixed(1)}%</text>
+                           );
+                         }}
+                       >
+                         {yoyRows.map((m, i) => (
+                           <Cell
+                             key={`yoy-${i}`}
+                             fill={!m.hasData ? '#e2e8f0' : m.changePct >= 0 ? BRAND.green : STATUS.not_ready}
+                             stroke={!m.hasData ? '#adb5bd' : undefined}
+                             strokeDasharray={!m.hasData ? '4 3' : undefined}
+                             radius={[0, 6, 6, 0]}
+                           />
+                         ))}
+                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1187,13 +1300,17 @@ caption={
                               {m.changePct != null ? formatPctSigned(m.changePct) : na()}
                             </td>
                             <td className="fc-table-badge">
-                              <span className={`fc-badge fc-badge--${directionTone(m.direction)}`}>{directionLabel(m.direction)}</span>
+                              {m.hasForecast ? (
+                                <span className={`fc-badge fc-badge--${directionTone(m.direction)}`}>{directionLabel(m.direction)}</span>
+                              ) : (
+                                <span className="fc-badge fc-badge--neutral">Not enough data</span>
+                              )}
                             </td>
                             <td className="fc-table-badge">
                               <span className={`fc-badge fc-badge--${m.confidence === 'high' ? 'good' : m.confidence === 'moderate' ? 'neutral' : 'bad'}`}>{FORECAST_CONFIDENCE[m.confidence] || m.confidence}</span>
                             </td>
                             <td className="fc-table-badge">
-                              <span className={`fc-badge fc-badge--${m.sufficiency === 'sufficient' ? 'good' : m.sufficiency === 'limited' ? 'neutral' : 'bad'}`}>{DATA_SUFFICIENCY[m.sufficiency] || m.sufficiency}</span>
+                              <span className={`fc-badge fc-badge--${m.sufficiency === 'ready' ? 'good' : m.sufficiency === 'limited' ? 'neutral' : 'bad'}`}>{DATA_SUFFICIENCY[m.sufficiency] || m.sufficiency}</span>
                             </td>
                             <td className="fc-table-numeric">{m.lastRun}</td>
                           </tr>
@@ -1204,9 +1321,7 @@ caption={
                 </div>
                 <ChartCaption tone="info">
                   Forecast production, change vs recent average, direction, confidence, and data sufficiency per municipality.
-                  {muniNoForecast.length > 0 && ` Municipalities without a forecast (${muniNoForecast.join(', ')}) show "Not available".`}
-                  <br />
-                  {sourceLine('forecast_runs, forecast_points', 'per municipality, latest run')}
+                  {muniNoForecast.length > 0 && ` Municipalities without a forecast (${muniNoForecast.join(', ')}) show "Not enough data".`}
                 </ChartCaption>
               </Card.Body>
             </Card>
