@@ -126,6 +126,8 @@ function InnerForecastDashboard() {
   const [running, setRunning] = useState(false);
   const [activeSection, setActiveSection] = useState('summary');
   const [selectedMuni, setSelectedMuni] = useState('all');
+  const [provinceRuns, setProvinceRuns] = useState([]);
+  const [recordedWindow, setRecordedWindow] = useState('12');
   const [forecastHorizon, setForecastHorizon] = useState(12);
   const [forecastNotes, setForecastNotes] = useState('');
   const [showForecastModal, setShowForecastModal] = useState(false);
@@ -141,6 +143,7 @@ function InnerForecastDashboard() {
       getAdminSupplyDemand().then((res) => setSupplyDemand(res)).catch(() => setSupplyDemand(null)),
       getAdminTrends().then((res) => setTrends(res.municipalities || [])).catch(() => setTrends([])),
       getAdminMonths().then((res) => setAdminMonths(res.months || [])).catch(() => setAdminMonths([])),
+      getForecastRuns({}).then((res) => setProvinceRuns(res.runs || [])).catch(() => setProvinceRuns([])),
     ]).finally(() => setLoading(false));
   }, []);
 
@@ -181,6 +184,17 @@ function InnerForecastDashboard() {
     return sorted[0].created_at || null;
   }, [runs]);
 
+  // Province-wide run (municipality_id == null) — used for demand comparison
+  const provinceRun = useMemo(() => {
+    const provinceWide = provinceRuns.filter((r) => r.municipality_id == null);
+    return provinceWide.length > 0 ? provinceWide[0] : null;
+  }, [provinceRuns]);
+
+  const provinceForecastMT = useMemo(() => {
+    if (!provinceRun || provinceRun.projected_total == null) return null;
+    return provinceRun.projected_total;
+  }, [provinceRun]);
+
   const chartData = useMemo(() => {
     if (!selectedRun || !selectedRun.points) return [];
     return selectedRun.points.map((p) => ({
@@ -209,8 +223,10 @@ function InnerForecastDashboard() {
 
   const recordedProductionMT = useMemo(() => {
     if (historyPoints.length === 0) return null;
-    return historyPoints.reduce((sum, d) => sum + (d.historical || 0), 0);
-  }, [historyPoints]);
+    const windowMonths = recordedWindow === 'all' ? Infinity : Number(recordedWindow);
+    const recent = historyPoints.slice(-windowMonths);
+    return recent.reduce((sum, d) => sum + (d.historical || 0), 0);
+  }, [historyPoints, recordedWindow]);
 
   const forecastProductionMT = useMemo(() => {
     if (!selectedRun || selectedRun.projected_total == null) return null;
@@ -247,20 +263,21 @@ function InnerForecastDashboard() {
   const demandSource = useMemo(() => {
     if (!supplyDemand || !supplyDemand.pangasinan) return null;
     return {
-      sourceName: supplyDemand.pangasinan.source_name || '\u2014',
-      year: supplyDemand.pangasinan.year || '\u2014',
+      sourceName: supplyDemand.pangasinan.source_name || '—',
+      year: supplyDemand.pangasinan.year || '—',
     };
   }, [supplyDemand]);
 
+  // Demand comparison always uses province-wide forecast (per admin requirement)
   const demandShortfallMT = useMemo(() => {
-    if (demandBenchmark == null || forecastProductionMT == null) return null;
-    return demandBenchmark - forecastProductionMT;
-  }, [demandBenchmark, forecastProductionMT]);
+    if (demandBenchmark == null || provinceForecastMT == null) return null;
+    return demandBenchmark - provinceForecastMT;
+  }, [demandBenchmark, provinceForecastMT]);
 
   const demandCoveredPct = useMemo(() => {
-    if (demandBenchmark == null || demandBenchmark <= 0 || forecastProductionMT == null) return null;
-    return (forecastProductionMT / demandBenchmark) * 100;
-  }, [demandBenchmark, forecastProductionMT]);
+    if (demandBenchmark == null || demandBenchmark <= 0 || provinceForecastMT == null) return null;
+    return (provinceForecastMT / demandBenchmark) * 100;
+  }, [demandBenchmark, provinceForecastMT]);
 
   const muniExpectedChange = useMemo(() => {
     return [...outlook]
@@ -356,15 +373,20 @@ function InnerForecastDashboard() {
     const payload = {
       municipality_id: selectedMuni !== 'all' ? Number(selectedMuni) : null,
       forecast_horizon: forecastHorizon,
+      notes: forecastNotes.trim() || undefined,
     };
     runForecast(payload)
       .then((res) => {
-        toastSuccess(`Forecast run #${res.run.id} has been generated.`, 'Forecast complete');
-        return getForecastRuns(selectedMuni !== 'all' ? { municipality_id: Number(selectedMuni) } : {});
+        toastSuccess('Forecast has been generated.', 'Forecast complete');
+        return Promise.all([
+          getForecastRuns(selectedMuni !== 'all' ? { municipality_id: Number(selectedMuni) } : {}),
+          getForecastRuns({}),
+        ]);
       })
-      .then((res) => {
-        setRuns(res.runs || []);
-        if (res.runs && res.runs.length > 0) setSelectedRunId(String(res.runs[0].id));
+      .then(([runsRes, provinceRes]) => {
+        setRuns(runsRes.runs || []);
+        setProvinceRuns(provinceRes.runs || []);
+        if (runsRes.runs && runsRes.runs.length > 0) setSelectedRunId(String(runsRes.runs[0].id));
       })
       .catch((err) => {
         const message = err.message || 'Could not run the forecast.';
@@ -392,11 +414,11 @@ function InnerForecastDashboard() {
     if (forecastProductionMT == null) {
       return 'No forecast has been generated yet. Run a forecast to see projected production.';
     }
-    let sentence = `Forecast production for the next 12 months is ${formatMT(forecastProductionMT)}`;
+    let sentence = `Forecast production for the next 12 months is ${formatMT(forecastProductionMT)} MT`;
     if (demandShortfallMT != null) {
       const verb = demandShortfallMT >= 0 ? 'exceeds' : 'falls short of';
       const abs = Math.abs(demandShortfallMT);
-      sentence += `, which ${verb} salt demand by ${formatMT(abs)}`;
+      sentence += `, which ${verb} provincial salt demand by ${formatMT(abs)} MT`;
     }
     sentence += `. Direction: ${directionLabel(direction)}.`;
     return sentence;
@@ -404,13 +426,13 @@ function InnerForecastDashboard() {
 
   const demandAssumption = useMemo(() => {
     if (demandShortfallMT == null) {
-      return 'Missing demand benchmark or forecast \u2014 assumption cannot be computed.';
+      return 'Missing demand benchmark or forecast — assumption cannot be computed.';
     }
     const covered = demandCoveredPct != null ? demandCoveredPct.toFixed(1) + '%' : 'n/a';
     if (demandShortfallMT <= 0) {
-      return `Assumption: Forecast production meets or exceeds salt demand. Forecast covers ${covered} of demand. Gap = salt demand \u2212 forecast production.`;
+      return `Assumption: Forecast production meets or exceeds salt demand. Forecast covers ${covered} of demand. Gap = salt demand − forecast production.`;
     }
-    return `Assumption: Forecast production is below salt demand; gap = salt demand \u2212 forecast production. Forecast covers ${covered} of demand.`;
+    return `Assumption: Forecast production is below salt demand; gap = salt demand − forecast production. Forecast covers ${covered} of demand.`;
   }, [demandShortfallMT, demandCoveredPct]);
 
   const kpiLoading = loading || !selectedRun;
@@ -451,11 +473,18 @@ function InnerForecastDashboard() {
             <span className="fc-meta-label">Data as of</span>
             <span className="fc-meta-value">
               {latestRecordMonth ? monthLabel(latestRecordMonth) : na()}
-              {latestRunTime ? ` \u00b7 latest forecast run ${new Date(latestRunTime).toLocaleString()}` : ''}
+              {latestRunTime ? ` · latest forecast run ${new Date(latestRunTime).toLocaleString()}` : ''}
             </span>
           </span>
         </div>
         <div className="fc-filter-row">
+          <label className="fc-filter-label" htmlFor="forecast-recorded-window">Recorded window</label>
+          <Form.Select id="forecast-recorded-window" className="fc-filter-select" value={recordedWindow} onChange={(e) => setRecordedWindow(e.target.value)} aria-label="Recorded production window">
+            <option value="3">Last 3 months</option>
+            <option value="6">Last 6 months</option>
+            <option value="12">Last 12 months</option>
+            <option value="all">All history</option>
+          </Form.Select>
           <label className="fc-filter-label" htmlFor="forecast-muni-scope">Municipality scope</label>
           <Form.Select id="forecast-muni-scope" className="fc-filter-select" value={selectedMuni} onChange={(e) => setSelectedMuni(e.target.value)} aria-label="Municipality scope">
             <option value="all">{SCOPE_ALL_LABEL}</option>
@@ -468,13 +497,13 @@ function InnerForecastDashboard() {
             {!selectedRunId && <option value="">Latest run</option>}
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.municipality_name || SCOPE_ALL_LABEL} \u00b7 {new Date(r.created_at).toLocaleDateString()}
+                {r.municipality_name || SCOPE_ALL_LABEL} · {new Date(r.created_at).toLocaleDateString()}
                 {r.projected_total != null ? ` (${formatMT(r.projected_total)})` : ''}
               </option>
             ))}
           </Form.Select>
           <Button variant="outline-secondary" size="sm" onClick={openForecastModal} disabled={running} className="fc-run-btn">
-            {running ? <span role="status" aria-label="Running">Running\u2026</span> : 'Run Forecast'}
+            {running ? <span role="status" aria-label="Running">Running…</span> : 'Run Forecast'}
           </Button>
         </div>
       </PageHeader>
@@ -499,8 +528,8 @@ function InnerForecastDashboard() {
             title={label('recordedMt') || 'Recorded production'}
             value={recordedProductionMT != null ? recordedProductionMT : null}
             unit={unit('recordedMt') || 'MT'}
-            supporting={`Sum of approved records, last 12 complete months${latestRecordMonth ? ` through ${monthLabel(latestRecordMonth)}` : ''}`}
-            info={definition('recordedMt') + ' ' + sourceLine('production_records', "status='approved', last 12 complete months")}
+            supporting={`Sum of approved records, last ${recordedWindow === 'all' ? 'all available' : recordedWindow} months${latestRecordMonth ? ` through ${monthLabel(latestRecordMonth)}` : ''}`}
+            info={definition('recordedMt') + ' ' + sourceLine('production_records', "status='approved'")}
             loading={kpiLoading}
           />
           <KpiCard
@@ -508,8 +537,8 @@ function InnerForecastDashboard() {
             title={label('forecastTotalMt') || 'Forecast production'}
             value={forecastProductionMT != null ? forecastProductionMT : null}
             unit={unit('forecastTotalMt') || 'MT'}
-            supporting={`Next 12 months \u00b7 run ${forecastRunDate ? new Date(forecastRunDate).toLocaleDateString() : '\u2014'}`}
-            info={definition('forecastTotalMt') + ' ' + sourceLine('forecast_runs, forecast_points', `run #${selectedRun?.id}, method: ${methodName(forecastMethod || 'none')}`)}
+            supporting={`Next 12 months${forecastRunDate ? ` · ${new Date(forecastRunDate).toLocaleDateString()}` : ''}`}
+            info={definition('forecastTotalMt') + ' ' + sourceLine('forecast_runs, forecast_points', 'province-wide forecast run')}
             badge={{ text: directionLabel(direction), tone: directionTone(direction) }}
             loading={kpiLoading}
           />
@@ -519,12 +548,12 @@ function InnerForecastDashboard() {
             value={expectedChangePct != null ? expectedChangePct : null}
             unit={unit('changeVsRecentAvgPct') || '%'}
             supporting={`Forecast vs recent historical average`}
-            info={definition('changeVsRecentAvgPct') + ' ' + sourceLine('forecast_runs', `run #${selectedRun?.id}`)}
+            info={definition('changeVsRecentAvgPct') + ' ' + sourceLine('forecast_runs', 'latest forecast run')}
             trend={{
               direction: direction === 'increasing' ? 'up' : direction === 'declining' ? 'down' : 'up',
               value: expectedChangePct != null ? Math.abs(expectedChangePct) : 0,
               label: directionLabel(direction),
-              goodWhen: 'up',
+              goodWhen: direction === 'declining' ? 'down' : 'up',
             }}
             loading={kpiLoading}
           />
@@ -543,9 +572,9 @@ function InnerForecastDashboard() {
             title={label('forecastConfidence') || 'Forecast confidence'}
             value={na()}
             unit={null}
-            supporting={forecastConfidence ? FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence : '\u2014'}
-            info={definition('forecastConfidence') + ' ' + sourceLine('forecast_runs', `run #${selectedRun?.id}`)}
-            badge={{ text: forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : '\u2014', tone: forecastConfidence === 'high' ? 'good' : forecastConfidence === 'moderate' ? 'neutral' : 'bad' }}
+            supporting={forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : '—'}
+            info={definition('forecastConfidence') + ' ' + sourceLine('forecast_runs', 'latest forecast run')}
+            badge={{ text: forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : '—', tone: forecastConfidence === 'high' ? 'good' : forecastConfidence === 'moderate' ? 'neutral' : 'bad' }}
             loading={kpiLoading}
           />
         </KpiGrid>
@@ -557,24 +586,21 @@ function InnerForecastDashboard() {
           <span className="fc-section-chip"><ChartLine size={16} strokeWidth={2} /></span>
           <div>
             <h2 className="fc-section-title">Production trajectory</h2>
-            <p className="fc-section-sub">Historical (blue) then forecast (orange) with expected-range band. \u201cForecast starts here\u201d marks the boundary.</p>
+            <p className="fc-section-sub">Historical (blue) then forecast (orange) with expected-range band. "Forecast starts here" marks the boundary.</p>
           </div>
         </div>
 
         <ChartCard
           icon={ChartLine}
           title="Historical vs Forecast Production"
-          subtitle={`${selectedMuniName} \u00b7 ${chartData.length} months`}
+          subtitle={`${selectedMuniName} · ${chartData.length} months`}
           height={360}
           caption={
             <div className="fc-trajectory-caption">
               {hasIncompleteTail && (
-                <span className="fc-incomplete-badge" title="Recent months have fewer approved records than normal \u2014 may be under-reported.">
+                <span className="fc-incomplete-badge" title="Recent months have fewer approved records than normal — may be under-reported.">
                   Still being reported
                 </span>
-              )}
-              {forecastStartIdx >= 0 && (
-                <span className="fc-divider-label">Forecast starts here \u2192</span>
               )}
             </div>
           }
@@ -590,8 +616,8 @@ function InnerForecastDashboard() {
               <ComposedChart data={chartData} margin={{ top: 20, right: 24, bottom: 24, left: 0 }}>
                 <defs>
                   <linearGradient id="fcBandGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={BRAND.ocean} stopOpacity={0.12} />
-                    <stop offset="100%" stopColor={BRAND.ocean} stopOpacity={0.02} />
+                    <stop offset="0%" stopColor={BRAND.ocean} stopOpacity={0.20} />
+                    <stop offset="100%" stopColor={BRAND.ocean} stopOpacity={0.08} />
                   </linearGradient>
                   <linearGradient id="fcAreaGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={BRAND.gold} stopOpacity={0.30} />
@@ -606,7 +632,7 @@ function InnerForecastDashboard() {
                 />
                 <YAxis
                   tick={{ fontSize: 11 }}
-                  tickFormatter={(v) => `${Math.round(v).toLocaleString()}`}
+                  tickFormatter={(v) => `${Math.round(v).toLocaleString()} MT`}
                 />
                 <Tooltip
                   content={({ active, payload }) => {
@@ -617,17 +643,17 @@ function InnerForecastDashboard() {
                         <div className="fc-tooltip-label">{d.labelShort}</div>
                         {d.historical != null && (
                           <div className="fc-tooltip-row">
-                            <span>Historical</span><b>{formatMT(d.historical)}</b>
+                            <span>Historical</span><b>{formatMT(d.historical)} MT</b>
                           </div>
                         )}
                         {d.forecast != null && (
                           <div className="fc-tooltip-row">
-                            <span>Forecast</span><b>{formatMT(d.forecast)}</b>
+                            <span>Forecast</span><b>{formatMT(d.forecast)} MT</b>
                           </div>
                         )}
                         {d.lower != null && d.upper != null && (
                           <div className="fc-tooltip-row">
-                            <span>Expected range</span><b>{formatMT(d.lower)} \u2013 {formatMT(d.upper)}</b>
+                            <span>Expected range</span><b>{formatMT(d.lower)} – {formatMT(d.upper)} MT</b>
                           </div>
                         )}
                         <div className="fc-tooltip-source">{sourceLine('forecast_points', `period ${d.label}, is_forecast=${d.isForecast}`)}</div>
@@ -635,7 +661,20 @@ function InnerForecastDashboard() {
                     );
                   }}
                 />
-                <Legend />
+                {forecastStartIdx >= 0 && chartData[forecastStartIdx] && (
+                  <ReferenceLine
+                    x={chartData[forecastStartIdx].labelShort}
+                    stroke="#9CA3AF"
+                    strokeDasharray="4 3"
+                    strokeWidth={2}
+                    label={{
+                      value: 'Forecast starts here',
+                      position: 'top',
+                      fontSize: 11,
+                      fill: '#6B7280',
+                    }}
+                  />
+                )}
                 {chartData.some((d) => d.lower != null && d.upper != null) && (
                   <>
                     <Area type="monotone" dataKey="upper" stroke="none" fill="url(#fcBandGrad)" name="Upper bound" connectNulls />
@@ -645,6 +684,11 @@ function InnerForecastDashboard() {
                 <Line type="monotone" dataKey="historical" stroke={BRAND.ocean} strokeWidth={3} dot={false} name="Historical" connectNulls isAnimationActive={false} />
                 <Line type="monotone" dataKey="forecast" stroke={BRAND.gold} strokeWidth={3} strokeDasharray="6 4" dot={false} name="Forecast" connectNulls isAnimationActive={false} />
               </ComposedChart>
+              <div className="fc-trajectory-legend">
+                <span className="fc-legend-item"><span className="fc-legend-swatch" style={{ backgroundColor: BRAND.ocean }} /> Historical</span>
+                <span className="fc-legend-item"><span className="fc-legend-swatch" style={{ backgroundColor: BRAND.gold }} /> Forecast</span>
+                <span className="fc-legend-item"><span className="fc-legend-swatch" style={{ backgroundColor: 'rgba(240, 154, 40, 0.20)', border: '1px solid rgba(240, 154, 40, 0.40)' }} /> Expected range</span>
+              </div>
             </ResponsiveContainer>
           )}
         </ChartCard>
@@ -667,7 +711,7 @@ function InnerForecastDashboard() {
           <span className="fc-section-chip"><CalendarDays size={16} strokeWidth={2} /></span>
           <div>
             <h2 className="fc-section-title">Seasonal pattern</h2>
-            <p className="fc-section-sub">Average production per calendar month. Dry = Jan\u2013Jun, Rainy = Jul\u2013Dec.</p>
+            <p className="fc-section-sub">Average production per calendar month. Dry = Jan–Jun, Rainy = Jul–Dec.</p>
           </div>
         </div>
 
@@ -678,10 +722,9 @@ function InnerForecastDashboard() {
           height={260}
           caption={
             <ChartCaption tone="info">
-              Dry months (Jan\u2013Jun) typically show higher output; rainy months (Jul\u2013Dec) lower. Current month marked.
-            </ChartCaption>
+              Dry months (Jan–Jun) typically show higher output; rainy months (Jul–Dec) lower. Current month marked.
+</ChartCaption>
           }
-          className="fc-seasonal-card"
         >
           {(() => {
             const monthTotals = {};
@@ -799,7 +842,7 @@ function InnerForecastDashboard() {
                   {demandShortfallMT != null ? (
                     demandShortfallMT <= 0 ? (
                       <div className="fc-verdict-surplus">
-                        <span className="fc-verdict-icon">\u2713</span>
+                        <span className="fc-verdict-icon">✓</span>
                         <span className="fc-verdict-text">Surplus: {formatMT(Math.abs(demandShortfallMT))}</span>
                       </div>
                     ) : (
@@ -809,7 +852,7 @@ function InnerForecastDashboard() {
                       </div>
                     )
                   ) : (
-                    <div className="fc-verdict-na">Not available \u2014 missing demand benchmark or forecast.</div>
+                    <div className="fc-verdict-na">Not available — missing demand benchmark or forecast.</div>
                   )}
                 </div>
                 <div className="fc-demand-assumption mt-2">
@@ -944,7 +987,7 @@ function InnerForecastDashboard() {
                 <div className="fc-muni-legend mt-2">
                   <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: BRAND.green }} /> Increasing (&gt;+2%)</span>
                   <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: STATUS.not_ready }} /> Declining (&lt;-2%)</span>
-                  <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: '#adb5bd' }} /> Stable (within \u00b12%)</span>
+                  <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: '#adb5bd' }} /> Stable (within ±2%)</span>
                   {muniNoForecast.length > 0 && (
                     <span className="fc-legend-item fc-legend-no-data">
                       <span className="fc-legend-dot" style={{ backgroundColor: '#e2e8f0', border: '1px dashed #adb5bd' }} /> Not enough data: {muniNoForecast.join(', ')}
@@ -954,7 +997,7 @@ function InnerForecastDashboard() {
                 {muniNoForecast.length > 0 && (
                   <div className="fc-not-enough-data mt-2">
                     <p className="fc-not-enough-text">
-                      {muniNoForecast.join(', ')} <strong>Not enough data</strong> \u2014 no forecast generated (fewer than 6 observed months). Run a forecast for this municipality first.
+                      {muniNoForecast.join(', ')} <strong>Not enough data</strong> — no forecast generated (fewer than 6 observed months). Run a forecast for this municipality first.
                     </p>
                   </div>
                 )}
@@ -1076,7 +1119,7 @@ function InnerForecastDashboard() {
                 {yoyRows.filter((m) => !m.hasData).length > 0 && (
                   <div className="fc-yoy-incomplete mt-2">
                     <p className="fc-yoy-incomplete-text">
-                      {yoyRows.filter((m) => !m.hasData).map((m) => m.name).join(', ')} \u2014 <strong>Incomplete data</strong> (not enough complete months for a valid YoY comparison).
+                      {yoyRows.filter((m) => !m.hasData).map((m) => m.name).join(', ')} — <strong>Incomplete data</strong> (not enough complete months for a valid YoY comparison).
                     </p>
                   </div>
                 )}
@@ -1142,7 +1185,7 @@ function InnerForecastDashboard() {
                 </div>
                 <ChartCaption tone="info">
                   Forecast production, change vs recent average, direction, confidence, and data sufficiency per municipality.
-                  {muniNoForecast.length > 0 && ` Municipalities without a forecast (${muniNoForecast.join(', ')}) show \u201cNot available\u201d.`}
+                  {muniNoForecast.length > 0 && ` Municipalities without a forecast (${muniNoForecast.join(', ')}) show "Not available".`}
                   <br />
                   {sourceLine('forecast_runs, forecast_points', 'per municipality, latest run')}
                 </ChartCaption>
@@ -1158,7 +1201,7 @@ function InnerForecastDashboard() {
           <span className="fc-section-chip"><Info size={16} strokeWidth={2} /></span>
           <div>
             <h2 className="fc-section-title">How this forecast was made</h2>
-            <p className="fc-section-sub">Forecast method, accuracy check, model comparison \u2014 plain-English names first.</p>
+            <p className="fc-section-sub">Forecast method, accuracy check, model comparison — plain-English names first.</p>
           </div>
         </div>
 
@@ -1197,7 +1240,7 @@ function InnerForecastDashboard() {
                   <div className="fc-method-label">Expected range</div>
                   <div className="fc-method-value">
                     {selectedRun && forecastPoints.length > 0
-                      ? `${formatMT(Math.min(...forecastPoints.map((d) => d.lower || 0)))} \u2013 ${formatMT(Math.max(...forecastPoints.map((d) => d.upper || 0)))}`
+                      ? `${formatMT(Math.min(...forecastPoints.map((d) => d.lower || 0)))} – ${formatMT(Math.max(...forecastPoints.map((d) => d.upper || 0)))}`
                       : na()}
                   </div>
                   <div className="fc-method-source">90% expected range from forecast_points.lower_bound / upper_bound</div>
@@ -1229,17 +1272,6 @@ function InnerForecastDashboard() {
               </Card.Body>
             </Card>
           </Col>
-        </div>
-
-        <div className="fc-method-collapse mt-4">
-          <button
-            type="button"
-            className="fc-collapse-toggle"
-            onClick={() => setActiveSection('method')}
-            aria-expanded="true"
-          >
-            <span>Collapse \u201cHow this forecast was made\u201d</span>
-          </button>
         </div>
       </section>
 
@@ -1283,7 +1315,7 @@ function InnerForecastDashboard() {
         <Modal.Footer>
           <Button variant="secondary" onClick={() => setShowForecastModal(false)} disabled={running}>Cancel</Button>
           <Button variant="primary" onClick={submitForecast} disabled={running}>
-            {running ? 'Running\u2026' : 'Run Forecast'}
+            {running ? 'Running…' : 'Run Forecast'}
           </Button>
         </Modal.Footer>
       </Modal>

@@ -2005,9 +2005,6 @@ body {
 .fc-kpi-strip {
   margin-bottom: 24px;
 }
-.fc-kpi-na { color: var(--ui-text-muted); }
-.fc-kpi-num { font-variant-numeric: tabular-nums; }
-.fc-kpi-unit { color: var(--ui-text-2); font-size: 0.875em; }
 
 /* Card inner */
 .fc-card-body {
@@ -2048,13 +2045,6 @@ body {
   color: #92400e;
   background: #fef6e7;
 }
-.fc-divider-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--ui-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
 .fc-annotation-row {
   display: flex;
   gap: 16px;
@@ -2069,7 +2059,6 @@ body {
 }
 
 /* Seasonal */
-.fc-seasonal-card {}
 
 /* Demand check */
 .fc-demand-head {
@@ -2334,22 +2323,6 @@ body {
   color: var(--ui-text-muted);
   margin-top: 2px;
 }
-.fc-method-collapse {
-  margin-top: 24px;
-}
-.fc-collapse-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ui-accent);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-}
-.fc-collapse-toggle:hover { text-decoration: underline; }
 
 /* Responsive */
 @media (max-width: 768px) {
@@ -2360,6 +2333,27 @@ body {
   .fc-filter-select { width: 100%; }
   .fc-pill-nav { padding: 0 12px; }
   .fc-pill { padding: 5px 12px; font-size: 12px; }
+}
+
+/* Trajectory chart custom legend */
+.fc-trajectory-legend {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ui-text-2);
+}
+.fc-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fc-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 
 /* ===== Admin shell + sidebar styles moved to src/styles/sidebar.css ===== */
