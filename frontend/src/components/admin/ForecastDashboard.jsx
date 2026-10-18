@@ -1,12 +1,12 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Row, Col, Card, Alert, Form, Button, Modal } from 'react-bootstrap';
 import ErrorBoundary from '../ErrorBoundary';
 import {
   ComposedChart, Line, Area, Bar, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Legend, Cell, ReferenceArea, ReferenceLine,
+  CartesianGrid, Cell, ReferenceArea, ReferenceLine,
 } from 'recharts';
 import {
-  ChartLine, ChartArea, CalendarDays, Target, Boxes, TrendingUp, ArrowUpRight, ArrowDownRight,
+  ChartLine, CalendarDays, Target, Boxes, TrendingUp, ArrowDownRight,
   Activity, ShieldCheck, Clock, Flag, List, Table as TableIcon, Zap, Info,
 } from 'lucide-react';
 import {
@@ -48,12 +48,6 @@ function directionTone(d) {
   if (d === 'increasing') return 'good';
   if (d === 'declining') return 'bad';
   return 'neutral';
-}
-
-function formatPct1(val) {
-  if (val === null || val === undefined || !Number.isFinite(val)) return '\u2014';
-  const sign = val > 0 ? '+' : '';
-  return `${sign}${val.toFixed(1)}%`;
 }
 
 function formatPctSigned(val) {
@@ -163,7 +157,26 @@ function InnerForecastDashboard() {
       .catch((err) => { setError(err.message || 'Failed to load forecast runs.'); setLoading(false); });
   }, [selectedMuni, selectedRunId]);
 
-  const selectedRun = useMemo(() => runs.find((r) => String(r.id) === String(selectedRunId)) || (runs[0] || null), [runs, selectedRunId]);
+  const selectedRun = useMemo(() => {
+    // Validate the stored selection against the current scope. When scope is
+    // "All 7 municipalities" the displayed run must be a province-wide run
+    // (municipality_id == null), never a single-municipality run like
+    // Alaminos City; the reverse holds for a municipality scope.
+    const byId = runs.find((r) => String(r.id) === String(selectedRunId));
+    if (byId) {
+      const isProvinceScope = selectedMuni === 'all';
+      const runIsProvince = byId.municipality_id == null;
+      if (isProvinceScope === runIsProvince) return byId;
+    }
+    const pool = runs.filter((r) =>
+      selectedMuni === 'all' ? r.municipality_id == null : r.municipality_id === Number(selectedMuni)
+    );
+    if (pool.length) {
+      pool.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      return pool[0];
+    }
+    return runs[0] || null;
+  }, [runs, selectedRunId, selectedMuni]);
 
   const selectedMuniName = useMemo(() => {
     if (selectedMuni === 'all') return SCOPE_ALL_LABEL;
@@ -184,9 +197,12 @@ function InnerForecastDashboard() {
     return sorted[0].created_at || null;
   }, [runs]);
 
-  // Province-wide run (municipality_id == null) — used for demand comparison
+  // Province-wide run (municipality_id == null) — used for demand comparison.
+  // Always the NEWEST province-wide run, never an arbitrary first match.
   const provinceRun = useMemo(() => {
-    const provinceWide = provinceRuns.filter((r) => r.municipality_id == null);
+    const provinceWide = provinceRuns
+      .filter((r) => r.municipality_id == null)
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
     return provinceWide.length > 0 ? provinceWide[0] : null;
   }, [provinceRuns]);
 
@@ -243,11 +259,6 @@ function InnerForecastDashboard() {
   const forecastConfidence = useMemo(() => {
     if (!selectedRun) return null;
     return selectedRun.reliability || null;
-  }, [selectedRun]);
-
-  const forecastMethod = useMemo(() => {
-    if (!selectedRun) return null;
-    return selectedRun.algorithm || null;
   }, [selectedRun]);
 
   const forecastRunDate = useMemo(() => {
@@ -376,7 +387,7 @@ function InnerForecastDashboard() {
       notes: forecastNotes.trim() || undefined,
     };
     runForecast(payload)
-      .then((res) => {
+      .then(() => {
         toastSuccess('Forecast has been generated.', 'Forecast complete');
         return Promise.all([
           getForecastRuns(selectedMuni !== 'all' ? { municipality_id: Number(selectedMuni) } : {}),
@@ -612,8 +623,9 @@ function InnerForecastDashboard() {
               <p>No forecast data available. <strong>Run Forecast</strong> to generate a projection.</p>
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartData} margin={{ top: 20, right: 24, bottom: 24, left: 0 }}>
+            <>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={chartData} margin={{ top: 20, right: 24, bottom: 24, left: 0 }}>
                 <defs>
                   <linearGradient id="fcBandGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={BRAND.ocean} stopOpacity={0.20} />
@@ -656,7 +668,7 @@ function InnerForecastDashboard() {
                             <span>Expected range</span><b>{formatMT(d.lower)} – {formatMT(d.upper)} MT</b>
                           </div>
                         )}
-                        <div className="fc-tooltip-source">{sourceLine('forecast_points', `period ${d.label}, is_forecast=${d.isForecast}`)}</div>
+                        <div className="fc-tooltip-source">Source: approved production records for historical months; model forecast for future months.</div>
                       </div>
                     );
                   }}
@@ -684,12 +696,13 @@ function InnerForecastDashboard() {
                 <Line type="monotone" dataKey="historical" stroke={BRAND.ocean} strokeWidth={3} dot={false} name="Historical" connectNulls isAnimationActive={false} />
                 <Line type="monotone" dataKey="forecast" stroke={BRAND.gold} strokeWidth={3} strokeDasharray="6 4" dot={false} name="Forecast" connectNulls isAnimationActive={false} />
               </ComposedChart>
-              <div className="fc-trajectory-legend">
-                <span className="fc-legend-item"><span className="fc-legend-swatch" style={{ backgroundColor: BRAND.ocean }} /> Historical</span>
-                <span className="fc-legend-item"><span className="fc-legend-swatch" style={{ backgroundColor: BRAND.gold }} /> Forecast</span>
-                <span className="fc-legend-item"><span className="fc-legend-swatch" style={{ backgroundColor: 'rgba(240, 154, 40, 0.20)', border: '1px solid rgba(240, 154, 40, 0.40)' }} /> Expected range</span>
-              </div>
             </ResponsiveContainer>
+            <div className="fc-trajectory-legend">
+              <span className="fc-legend-item"><span className="fc-legend-swatch" style={{ backgroundColor: BRAND.ocean }} /> Historical</span>
+              <span className="fc-legend-item"><span className="fc-legend-swatch" style={{ backgroundColor: BRAND.gold }} /> Forecast</span>
+              <span className="fc-legend-item"><span className="fc-legend-swatch" style={{ backgroundColor: 'rgba(240, 154, 40, 0.20)', border: '1px solid rgba(240, 154, 40, 0.40)' }} /> Expected range</span>
+            </div>
+            </>
           )}
         </ChartCard>
 
