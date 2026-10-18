@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import {
   ChartLine, CalendarDays, Target, Boxes, TrendingUp, ArrowDownRight,
-  Activity, ShieldCheck, Clock, Flag, List, Table as TableIcon, Zap, Info,
+  Activity, ShieldCheck, Clock, Flag, List, Table as TableIcon, Zap,
 } from 'lucide-react';
 import {
   runForecast, getForecastRuns, getMunicipalityOutlook, getAdminMunicipalities,
@@ -23,7 +23,7 @@ import ChartCard from '../ui/ChartCard';
 import ChartCaption from '../ChartCaption';
 import { formatMT } from '../../utils/volumeFormat';
 import {
-  label, unit, definition, methodName, TREND_LABELS, FORECAST_CONFIDENCE, DATA_SUFFICIENCY,
+  label, unit, definition, TREND_LABELS, FORECAST_CONFIDENCE, DATA_SUFFICIENCY,
   SCOPE_ALL_LABEL,
 } from '../../constants/labels';
 
@@ -63,41 +63,49 @@ function monthLabel(ym) {
   return `${MONTH_SHORT[m - 1]} ${y}`;
 }
 
-function sourceLine(dataset, filters) {
-  return `Source: ${dataset}${filters ? `, ${filters}` : ''}`;
-}
-
 function na() {
   return '\u2014';
 }
 
-/* ---------------------------------------------------------------
-   Sticky pill navigation
-   --------------------------------------------------------------- */
-
 const SECTIONS = [
-  { id: 'summary', label: 'Summary' },
-  { id: 'trajectory', label: 'Past to future' },
-  { id: 'demand', label: 'Demand check' },
-  { id: 'municipality', label: 'By municipality' },
-  { id: 'method', label: 'How it was made' },
+  { id: 'summary', label: 'Summary', controls: 'forecast-tabpanel-summary' },
+  { id: 'trajectory', label: 'Past to future', controls: 'forecast-tabpanel-trajectory' },
+  { id: 'demand', label: 'Demand check', controls: 'forecast-tabpanel-demand' },
+  { id: 'municipality', label: 'By municipality', controls: 'forecast-tabpanel-municipality' },
 ];
 
 function PillNav({ activeId, onSelect }) {
   return (
-    <nav className="fc-pill-nav" aria-label="Section navigation">
+    <div className="fc-nav-wrap" role="tablist" aria-label="Forecast sections">
       {SECTIONS.map((s) => (
         <button
           key={s.id}
+          id={`forecast-tab-${s.id}`}
           type="button"
+          role="tab"
+          aria-selected={activeId === s.id ? 'true' : 'false'}
+          aria-controls={s.controls}
+          tabIndex={activeId === s.id ? 0 : -1}
           className={`fc-pill ${activeId === s.id ? 'fc-pill--active' : ''}`}
           onClick={() => onSelect(s.id)}
-          aria-current={activeId === s.id ? 'true' : 'false'}
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') return;
+            e.preventDefault();
+            const idx = SECTIONS.findIndex((x) => x.id === activeId);
+            let next = idx;
+            if (e.key === 'ArrowRight') next = (idx + 1) % SECTIONS.length;
+            if (e.key === 'ArrowLeft') next = (idx - 1 + SECTIONS.length) % SECTIONS.length;
+            if (e.key === 'Home') next = 0;
+            if (e.key === 'End') next = SECTIONS.length - 1;
+            onSelect(SECTIONS[next].id);
+            const el = document.getElementById(`forecast-tab-${SECTIONS[next].id}`);
+            if (el) el.focus();
+          }}
         >
           {s.label}
         </button>
       ))}
-    </nav>
+    </div>
   );
 }
 
@@ -470,17 +478,18 @@ function InnerForecastDashboard() {
       .finally(() => { setRunning(false); setShowForecastModal(false); });
   };
 
-  const handleRunSelect = (id) => setSelectedRunId(String(id));
+  function formatRunLabel(r) {
+    // "Municipality · date (X MT)" with real characters. Falls back safely
+    // when created_at or projected_total is missing — never "Invalid Date".
+    const who = r.municipality_name || SCOPE_ALL_LABEL;
+    const when = r.created_at
+      ? new Date(r.created_at).toLocaleDateString()
+      : 'date unknown';
+    const amount = r.projected_total != null ? ` (${formatMT(r.projected_total)})` : '';
+    return `${who} · ${when}${amount}`;
+  }
 
-  const scrollToSection = (id) => {
-    const el = document.getElementById(id);
-    if (el) {
-      const navHeight = 60;
-      const top = el.getBoundingClientRect().top + window.scrollY - navHeight - 10;
-      window.scrollTo({ top, behavior: 'smooth' });
-      setActiveSection(id);
-    }
-  };
+  const handleRunSelect = (id) => setSelectedRunId(String(id));
 
   /* ---------------- Headline sentence (computed before early returns) ---------------- */
 
@@ -529,6 +538,58 @@ function InnerForecastDashboard() {
     return <Alert variant="danger">{error}</Alert>;
   }
 
+  // No forecast exists for the current scope — show a clear empty state
+  // instead of zeroed KPIs and blank charts.
+  if (runs.length === 0) {
+    return (
+      <div className="admin-single-page forecast-page">
+        <PageHeader
+          id="admin-forecast-header"
+          variant="sub"
+          title="Forecast &amp; Production Outlook"
+          subtitle="Chronological forecast story for the province and its municipalities."
+        >
+          <div className="fc-header-meta">
+            <span className="fc-data-as-of">
+              <span className="fc-meta-label">Data as of</span>
+              <span className="fc-meta-value">
+                {latestRecordMonth ? monthLabel(latestRecordMonth) : na()}
+              </span>
+            </span>
+          </div>
+          <div className="fc-filter-row">
+            <label className="fc-filter-label" htmlFor="forecast-recorded-window">Recorded window</label>
+            <Form.Select id="forecast-recorded-window" className="fc-filter-select" value={recordedWindow} onChange={(e) => setRecordedWindow(e.target.value)} aria-label="Recorded production window">
+              <option value="3">Last 3 months</option>
+              <option value="6">Last 6 months</option>
+              <option value="12">Last 12 months</option>
+              <option value="all">All history</option>
+            </Form.Select>
+            <label className="fc-filter-label" htmlFor="forecast-muni-scope">Municipality scope</label>
+            <Form.Select id="forecast-muni-scope" className="fc-filter-select" value={selectedMuni} onChange={(e) => setSelectedMuni(e.target.value)} aria-label="Municipality scope">
+              <option value="all">{SCOPE_ALL_LABEL}</option>
+              {municipalities.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </Form.Select>
+            <Button variant="outline-secondary" size="sm" onClick={openForecastModal} disabled={running} className="fc-run-btn">
+              {running ? <span role="status" aria-label="Running">Running…</span> : 'Run Forecast'}
+            </Button>
+          </div>
+        </PageHeader>
+
+        <div className="fc-empty-forecast">
+          <div className="fc-empty-forecast-card">
+            <span className="fc-empty-forecast-icon"><Zap size={32} strokeWidth={2} /></span>
+            <h3>No forecast yet</h3>
+            <p>Click <strong>Run Forecast</strong> to begin — this generates a 12-month projection from approved production records.</p>
+            <Button variant="primary" size="sm" onClick={openForecastModal} disabled={running}>Run Forecast</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   /* ===============================================================
      Render
      =============================================================== */
@@ -571,8 +632,7 @@ function InnerForecastDashboard() {
             {!selectedRunId && <option value="">Latest run</option>}
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.municipality_name || SCOPE_ALL_LABEL} · {new Date(r.created_at).toLocaleDateString()}
-                {r.projected_total != null ? ` (${formatMT(r.projected_total)})` : ''}
+                {formatRunLabel(r)}
               </option>
             ))}
           </Form.Select>
@@ -582,13 +642,13 @@ function InnerForecastDashboard() {
         </div>
       </PageHeader>
 
-      {/* ============ Sticky Pill Nav ============ */}
+      {/* ============ Tab navigation ============ */}
       <div className="fc-nav-wrap">
-        <PillNav activeId={activeSection} onSelect={scrollToSection} />
+        <PillNav activeId={activeSection} onSelect={setActiveSection} />
       </div>
 
       {/* ============ A. Summary ============ */}
-      <section id="summary" className="fc-section">
+      <section className="fc-section" role="tabpanel" id="forecast-tabpanel-summary" aria-labelledby="forecast-tab-summary" hidden={activeSection !== 'summary'}>
         <div className="fc-section-head">
           <span className="fc-section-chip"><Boxes size={16} strokeWidth={2} /></span>
           <div>
@@ -603,7 +663,7 @@ function InnerForecastDashboard() {
             value={recordedProductionMT != null ? recordedProductionMT : null}
             unit={unit('recordedMt') || 'MT'}
             supporting={`Sum of approved records, last ${recordedWindow === 'all' ? 'all available' : recordedWindow} months${latestRecordMonth ? ` through ${monthLabel(latestRecordMonth)}` : ''}`}
-            info={definition('recordedMt') + ' ' + sourceLine('production_records', "status='approved'")}
+            info={definition('recordedMt') + ' Source: approved production records.'}
             loading={kpiLoading}
           />
           <KpiCard
@@ -612,7 +672,7 @@ function InnerForecastDashboard() {
             value={forecastProductionMT != null ? forecastProductionMT : null}
             unit={unit('forecastTotalMt') || 'MT'}
             supporting={`Next 12 months${forecastRunDate ? ` · ${new Date(forecastRunDate).toLocaleDateString()}` : ''}`}
-            info={definition('forecastTotalMt') + ' ' + sourceLine('forecast_runs, forecast_points', 'province-wide forecast run')}
+            info={definition('forecastTotalMt') + ' Source: model forecast run.'}
             badge={{ text: directionLabel(direction), tone: directionTone(direction) }}
             loading={kpiLoading}
           />
@@ -622,7 +682,7 @@ function InnerForecastDashboard() {
             value={expectedChangePct != null ? expectedChangePct : null}
             unit={unit('changeVsRecentAvgPct') || '%'}
             supporting={`Forecast vs recent historical average`}
-            info={definition('changeVsRecentAvgPct') + ' ' + sourceLine('forecast_runs', 'latest forecast run')}
+            info={definition('changeVsRecentAvgPct') + ' Source: latest forecast run.'}
             trend={{
               direction: direction === 'increasing' ? 'up' : direction === 'declining' ? 'down' : 'up',
               value: expectedChangePct != null ? Math.abs(expectedChangePct) : 0,
@@ -647,7 +707,7 @@ function InnerForecastDashboard() {
             value={na()}
             unit={null}
             supporting={forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : '—'}
-            info={definition('forecastConfidence') + ' ' + sourceLine('forecast_runs', 'latest forecast run')}
+            info={definition('forecastConfidence') + ' Source: latest forecast run.'}
             badge={{ text: forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : '—', tone: forecastConfidence === 'high' ? 'good' : forecastConfidence === 'moderate' ? 'neutral' : 'bad' }}
             loading={kpiLoading}
           />
@@ -655,7 +715,7 @@ function InnerForecastDashboard() {
       </section>
 
       {/* ============ B. Past to future ============ */}
-      <section id="trajectory" className="fc-section">
+      <section className="fc-section" role="tabpanel" id="forecast-tabpanel-trajectory" aria-labelledby="forecast-tab-trajectory" hidden={activeSection !== 'trajectory'}>
         <div className="fc-section-head">
           <span className="fc-section-chip"><ChartLine size={16} strokeWidth={2} /></span>
           <div>
@@ -886,7 +946,7 @@ caption={
       </section>
 
       {/* ============ C. Demand check ============ */}
-      <section id="demand" className="fc-section">
+      <section className="fc-section" role="tabpanel" id="forecast-tabpanel-demand" aria-labelledby="forecast-tab-demand" hidden={activeSection !== 'demand'}>
         <div className="fc-section-head">
           <span className="fc-section-chip"><Target size={16} strokeWidth={2} /></span>
           <div>
@@ -998,7 +1058,7 @@ caption={
       </section>
 
       {/* ============ D. By municipality ============ */}
-      <section id="municipality" className="fc-section">
+      <section className="fc-section" role="tabpanel" id="forecast-tabpanel-municipality" aria-labelledby="forecast-tab-municipality" hidden={activeSection !== 'municipality'}>
         <div className="fc-section-head">
           <span className="fc-section-chip"><List size={16} strokeWidth={2} /></span>
           <div>
@@ -1323,86 +1383,6 @@ caption={
                   Forecast production, change vs recent average, direction, confidence, and data sufficiency per municipality.
                   {muniNoForecast.length > 0 && ` Municipalities without a forecast (${muniNoForecast.join(', ')}) show "Not enough data".`}
                 </ChartCaption>
-              </Card.Body>
-            </Card>
-          </Col>
-        </div>
-      </section>
-
-      {/* ============ E. Footer: How this forecast was made ============ */}
-      <section id="method" className="fc-section fc-method-section">
-        <div className="fc-section-head">
-          <span className="fc-section-chip"><Info size={16} strokeWidth={2} /></span>
-          <div>
-            <h2 className="fc-section-title">How this forecast was made</h2>
-            <p className="fc-section-sub">Forecast method, accuracy check, model comparison — plain-English names first.</p>
-          </div>
-        </div>
-
-        <div className="row g-3">
-          <Col lg={4} md={6}>
-            <Card className="fc-card h-100">
-              <Card.Body className="fc-card-body">
-                <div className="fc-method-item">
-                  <div className="fc-method-label">Forecast method</div>
-                  <div className="fc-method-value">
-                    {selectedRun ? methodName(selectedRun.algorithm || 'none') : na()}
-                  </div>
-                  <div className="fc-method-source">{sourceLine('forecast_runs', `run #${selectedRun?.id}`)}</div>
-                </div>
-                <div className="fc-method-item mt-3">
-                  <div className="fc-method-label">Data sufficiency</div>
-                  <div className="fc-method-value">
-                    {selectedRun ? (DATA_SUFFICIENCY[selectedRun.readiness] || selectedRun.readiness || na()) : na()}
-                  </div>
-                  <div className="fc-method-source">{definition('dataSufficiency')}</div>
-                </div>
-              </Card.Body>
-            </Card>
-          </Col>
-          <Col lg={4} md={6}>
-            <Card className="fc-card h-100">
-              <Card.Body className="fc-card-body">
-                <div className="fc-method-item">
-                  <div className="fc-method-label">Forecast confidence</div>
-                  <div className="fc-method-value">
-                    {selectedRun ? (FORECAST_CONFIDENCE[selectedRun.reliability] || selectedRun.reliability || na()) : na()}
-                  </div>
-                  <div className="fc-method-source">{definition('forecastConfidence')}</div>
-                </div>
-                <div className="fc-method-item mt-3">
-                  <div className="fc-method-label">Expected range</div>
-                  <div className="fc-method-value">
-                    {selectedRun && forecastPoints.length > 0
-                      ? `${formatMT(Math.min(...forecastPoints.map((d) => d.lower || 0)))} – ${formatMT(Math.max(...forecastPoints.map((d) => d.upper || 0)))}`
-                      : na()}
-                  </div>
-                  <div className="fc-method-source">90% expected range from forecast_points.lower_bound / upper_bound</div>
-                </div>
-              </Card.Body>
-            </Card>
-          </Col>
-          <Col lg={4} md={6}>
-            <Card className="fc-card h-100">
-              <Card.Body className="fc-card-body">
-                <div className="fc-method-item">
-                  <div className="fc-method-label">Model comparison</div>
-                  <div className="fc-method-value">
-                    {selectedRun && selectedRun.candidate_metrics
-                      ? Object.entries(selectedRun.candidate_metrics).length + ' models compared'
-                      : na()}
-                  </div>
-                  <div className="fc-method-source">Holdout comparison of actual vs predicted (MAE/RMSE/MAPE)</div>
-                </div>
-                <div className="fc-method-item mt-3">
-                  <div className="fc-method-label">Accuracy check</div>
-                  <div className="fc-method-value">
-                    {selectedRun && selectedRun.mae != null
-                      ? `MAE ${formatMT(selectedRun.mae)}`
-                      : na()}
-                  </div>
-                  <div className="fc-method-source">{definition('maeMt')}</div>
-                </div>
               </Card.Body>
             </Card>
           </Col>

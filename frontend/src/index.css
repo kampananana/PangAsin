@@ -1936,14 +1936,6 @@ body {
   padding-top: 8px;
   padding-bottom: 8px;
 }
-.fc-pill-nav {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding: 0 16px;
-  scrollbar-width: none;
-}
-.fc-pill-nav::-webkit-scrollbar { display: none; }
 .fc-pill {
   flex-shrink: 0;
   padding: 6px 14px;
@@ -2298,30 +2290,37 @@ body {
   text-align: center;
 }
 
-/* Method section */
-.fc-method-section {
-  margin-top: 40px;
+/* Empty forecast state */
+.fc-empty-forecast {
+  margin-top: 24px;
 }
-.fc-method-item {
-  margin-bottom: 14px;
+.fc-empty-forecast-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 24px;
+  background: var(--ui-surface);
+  border: 1px dashed var(--ui-border);
+  border-radius: 12px;
+  text-align: center;
 }
-.fc-method-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ui-text-2);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  margin-bottom: 2px;
+.fc-empty-forecast-icon {
+  display: inline-flex;
+  color: var(--ui-accent);
 }
-.fc-method-value {
-  font-size: 15px;
+.fc-empty-forecast-card h3 {
+  margin: 0;
+  font-size: 18px;
   font-weight: 700;
   color: var(--ui-text);
 }
-.fc-method-source {
-  font-size: 11px;
-  color: var(--ui-text-muted);
-  margin-top: 2px;
+.fc-empty-forecast-card p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ui-text-2);
+  max-width: 420px;
 }
 
 /* Responsive */
@@ -2331,8 +2330,9 @@ body {
     align-items: stretch;
   }
   .fc-filter-select { width: 100%; }
-  .fc-pill-nav { padding: 0 12px; }
-  .fc-pill { padding: 5px 12px; font-size: 12px; }
+  .fc-nav-wrap { padding: 8px 10px 0 10px; gap: 4px; }
+  .fc-pill { padding: 5px 10px; font-size: 12px; }
+  .fc-empty-forecast-card { padding: 32px 16px; }
 }
 
 /* Trajectory chart custom legend */
