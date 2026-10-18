@@ -733,10 +733,10 @@ function InnerForecastDashboard() {
           title="Average Production by Month"
           subtitle="Seasonal cycle across complete years"
           height={260}
-          caption={
+caption={
             <ChartCaption tone="info">
-              Dry months (Jan–Jun) typically show higher output; rainy months (Jul–Dec) lower. Current month marked.
-</ChartCaption>
+              Dry months (Jan–Jun) typically show higher output; rainy months (Jul–Dec) lower. The navy marker shows the latest month with approved records.
+            </ChartCaption>
           }
         >
           {(() => {
@@ -756,7 +756,15 @@ function InnerForecastDashboard() {
                 series.push({ month: m, label: MONTH_SHORT[m - 1], value: null });
               }
             }
-            const currentMonth = new Date().getMonth() + 1;
+            // Current month = the calendar month of the latest approved record,
+            // not the wall-clock month. The seasonal average is built from
+            // complete years, so the marker points at where reporting actually
+            // stands right now.
+            const seasonalCurrentMonth = (() => {
+              if (!latestRecordMonth) return null;
+              const parsed = parseInt(latestRecordMonth.slice(5, 7), 10);
+              return Number.isFinite(parsed) && parsed >= 1 && parsed <= 12 ? parsed : null;
+            })();
             return (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={series} margin={{ top: 20, right: 20, bottom: 24, left: 0 }}>
@@ -767,8 +775,9 @@ function InnerForecastDashboard() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--ui-chart-grid)" vertical={false} />
-                  <ReferenceArea x1={1} x2={6} fill="rgba(21, 101, 200, 0.08)" />
-                  <ReferenceArea x1={7} x2={12} fill="rgba(240, 154, 40, 0.10)" />
+                  <ReferenceArea x1={1} x2={6} fill="rgba(12, 35, 64, 0.13)" />
+                  <ReferenceArea x1={7} x2={12} fill="rgba(240, 154, 40, 0.16)" />
+                  <ReferenceLine x={6.5} stroke="rgba(12, 35, 64, 0.22)" strokeDasharray="3 3" strokeWidth={1} />
                   <XAxis
                     type="number"
                     dataKey="month"
@@ -779,7 +788,7 @@ function InnerForecastDashboard() {
                     interval={0}
                     tickLine={false}
                   />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${Math.round(v).toLocaleString()}`} width={44} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${Math.round(v).toLocaleString()} MT`} width={44} />
                   <Tooltip
                     content={({ active, payload }) => {
                       if (!active || !payload || payload.length === 0) return null;
@@ -789,21 +798,21 @@ function InnerForecastDashboard() {
                         <div className="fc-tooltip">
                           <div className="fc-tooltip-label">{d.label}</div>
                           <div className="fc-tooltip-row">
-                            <span>Average production</span><b>{formatMT(d.value)}</b>
+                            <span>Average production</span><b>{formatMT(d.value)} MT</b>
                           </div>
-                          <div className="fc-tooltip-source">{sourceLine('production_records', "status='approved', grouped by calendar month")}</div>
+                          <div className="fc-tooltip-source">Source: approved production records, grouped by calendar month across complete years.</div>
                         </div>
                       );
                     }}
                   />
                   <Area type="monotone" dataKey="value" stroke={BRAND.gold} strokeWidth={2} fill="url(#fcSeasonGrad)" dot={{ r: 4 }} connectNulls isAnimationActive={false} />
-                  {currentMonth && (
+                  {seasonalCurrentMonth && (
                     <ReferenceLine
-                      x={currentMonth}
-                      stroke={STATUS.not_ready}
-                      strokeDasharray="4 3"
-                      strokeWidth={2}
-                      label={{ value: 'Current month', position: 'top', fontSize: 11, fill: STATUS.not_ready }}
+                      x={seasonalCurrentMonth}
+                      stroke={BRAND.ocean}
+                      strokeDasharray="5 3"
+                      strokeWidth={2.5}
+                      label={{ value: 'Reporting as of', position: 'top', fontSize: 10, fill: BRAND.ocean }}
                     />
                   )}
                 </ComposedChart>
