@@ -126,6 +126,12 @@ function InnerForecastDashboard() {
   const [activeSection, setActiveSection] = useState('summary');
   const [selectedMuni, setSelectedMuni] = useState('all');
   const [recordedWindow, setRecordedWindow] = useState('12');
+  const [forecastHorizon, setForecastHorizon] = useState('12');
+
+  const resetFilters = () => {
+    setRecordedWindow('12');
+    setForecastHorizon('12');
+  };
 
   /* ---------------- Data loading ---------------- */
 
@@ -254,7 +260,11 @@ function InnerForecastDashboard() {
     // series to the run's forecast points. A single municipality scope uses
     // that municipality's own run, which carries its own history.
     if (selectedMuni === 'all' && provinceHistorySeries.length > 0) {
-      const fc = selectedRun.points.map((p) => ({
+      const n = forecastHorizon === 'all' ? Infinity : Number(forecastHorizon);
+      const allowed = new Set(selectedRun.points.filter((p) => p.is_forecast).sort((a, b) => String(a.period_label).localeCompare(String(b.period_label))).slice(0, n).map((p) => p.period_label));
+      const fc = selectedRun.points
+        .filter((p) => allowed.has(p.period_label))
+        .map((p) => ({
         label: p.period_label,
         labelShort: monthLabel(p.period_label),
         historical: null,
@@ -275,7 +285,11 @@ function InnerForecastDashboard() {
       }
       return [...provinceHistorySeries, ...fc];
     }
-    return selectedRun.points.map((p) => ({
+    const n = forecastHorizon === 'all' ? Infinity : Number(forecastHorizon);
+    const allowed = new Set(selectedRun.points.filter((p) => p.is_forecast).sort((a, b) => String(a.period_label).localeCompare(String(b.period_label))).slice(0, n).map((p) => p.period_label));
+    return selectedRun.points
+      .filter((p) => !p.is_forecast || allowed.has(p.period_label))
+      .map((p) => ({
       label: p.period_label,
       labelShort: monthLabel(p.period_label),
       historical: p.is_forecast ? null : (p.predicted_value != null ? p.predicted_value : null),
@@ -284,12 +298,12 @@ function InnerForecastDashboard() {
       upper: p.upper_bound != null ? p.upper_bound : null,
       isForecast: p.is_forecast,
     }));
-  }, [selectedRun, selectedMuni, provinceHistorySeries]);
+  }, [selectedRun, selectedMuni, provinceHistorySeries, forecastHorizon]);
 
   const historyPoints = chartData.filter((d) => !d.isForecast && d.historical != null);
   const forecastPoints = chartData.filter((d) => d.isForecast && d.forecast != null);
   const forecastStartIdx = chartData.findIndex((d) => d.isForecast);
-  const forecastHorizon = forecastPoints.length;
+  const forecastHorizonCount = forecastPoints.length;
 
   const incompleteMonths = useMemo(() => {
     if (chartData.length === 0) return [];
@@ -311,6 +325,15 @@ function InnerForecastDashboard() {
     if (!selectedRun || selectedRun.projected_total == null) return null;
     return selectedRun.projected_total;
   }, [selectedRun]);
+
+  const slicedForecastTotal = useMemo(() => {
+    if (!selectedRun || !selectedRun.points) return null;
+    const pts = selectedRun.points.filter((p) => p.is_forecast).sort((a, b) => String(a.period_label).localeCompare(String(b.period_label)));
+    const n = forecastHorizon === 'all' ? pts.length : Number(forecastHorizon);
+    const sliced = pts.slice(0, n);
+    if (sliced.length === 0) return null;
+    return sliced.reduce((s, p) => s + (Number(p.predicted_value) || 0), 0);
+  }, [selectedRun, forecastHorizon]);
 
   const expectedChangePct = useMemo(() => {
     if (!selectedRun || selectedRun.expected_change_pct == null) return null;
@@ -356,7 +379,7 @@ function InnerForecastDashboard() {
   // The 12-point rule: % covered and the surplus/shortfall verdict are only
   // meaningful when the forecast has a full 12-month horizon. With fewer
   // points the comparison is misleading, so hide those and show a notice.
-  const demandHasFullHorizon = forecastHorizon >= 12;
+  const demandHasFullHorizon = forecastHorizonCount >= 12;
 
   // Shared, consistent municipality order used by BOTH the "Expected change"
   // chart and the "Year-over-year change" chart. Forecasted municipalities sort
@@ -566,15 +589,20 @@ function InnerForecastDashboard() {
               </span>
             </span>
           </div>
-          <div className="fc-filter-row">
-            <label className="fc-filter-label" htmlFor="forecast-recorded-window">Recorded window</label>
-            <Form.Select id="forecast-recorded-window" className="fc-filter-select" value={recordedWindow} onChange={(e) => setRecordedWindow(e.target.value)} aria-label="Recorded production window">
-              <option value="3">Last 3 months</option>
-              <option value="6">Last 6 months</option>
-              <option value="12">Last 12 months</option>
-              <option value="all">All history</option>
-            </Form.Select>
-            <label className="fc-filter-label" htmlFor="forecast-muni-scope">Municipality scope</label>
+        <div className="fc-filter-row">
+          <label className="fc-filter-label" htmlFor="forecast-recorded-window">Recorded window</label>
+          <Form.Select id="forecast-recorded-window" className="fc-filter-select" value={recordedWindow} onChange={(e) => setRecordedWindow(e.target.value)} aria-label="Recorded production window">
+            <option value="3">Last 3 months</option>
+            <option value="6">Last 6 months</option>
+            <option value="12">Last 12 months</option>
+            <option value="all">All history</option>
+          </Form.Select>
+          <label className="fc-filter-label" htmlFor="forecast-horizon">Forecast horizon</label>
+          <Form.Select id="forecast-horizon" className="fc-filter-select" value={forecastHorizon} onChange={(e) => setForecastHorizon(e.target.value)} aria-label="Forecast horizon">
+            <option value="6">6 months</option>
+            <option value="12">12 months</option>
+          </Form.Select>
+          <label className="fc-filter-label" htmlFor="forecast-muni-scope">Municipality scope</label>
             <Form.Select id="forecast-muni-scope" className="fc-filter-select" value={selectedMuni} onChange={(e) => setSelectedMuni(e.target.value)} aria-label="Municipality scope">
               <option value="all">{SCOPE_ALL_LABEL}</option>
               {municipalities.map((m) => (
@@ -616,13 +644,22 @@ function InnerForecastDashboard() {
           </span>
         </div>
         <div className="fc-filter-row">
-          <label className="fc-filter-label" htmlFor="forecast-recorded-window">Recorded window</label>
-          <Form.Select id="forecast-recorded-window" className="fc-filter-select" value={recordedWindow} onChange={(e) => setRecordedWindow(e.target.value)} aria-label="Recorded production window">
-            <option value="3">Last 3 months</option>
-            <option value="6">Last 6 months</option>
-            <option value="12">Last 12 months</option>
-            <option value="all">All history</option>
-          </Form.Select>
+          {activeSection === 'trajectory' && (
+            <>
+              <label className="fc-filter-label" htmlFor="forecast-recorded-window">Recorded window</label>
+              <Form.Select id="forecast-recorded-window" className="fc-filter-select" value={recordedWindow} onChange={(e) => setRecordedWindow(e.target.value)} aria-label="Recorded production window">
+                <option value="3">Last 3 months</option>
+                <option value="6">Last 6 months</option>
+                <option value="12">Last 12 months</option>
+                <option value="all">All history</option>
+              </Form.Select>
+              <label className="fc-filter-label" htmlFor="forecast-horizon">Forecast horizon</label>
+              <Form.Select id="forecast-horizon" className="fc-filter-select" value={forecastHorizon} onChange={(e) => setForecastHorizon(e.target.value)} aria-label="Forecast horizon">
+                <option value="6">6 months</option>
+                <option value="12">12 months</option>
+              </Form.Select>
+            </>
+          )}
           <label className="fc-filter-label" htmlFor="forecast-muni-scope">Municipality scope</label>
           <Form.Select id="forecast-muni-scope" className="fc-filter-select" value={selectedMuni} onChange={(e) => setSelectedMuni(e.target.value)} aria-label="Municipality scope">
             <option value="all">{SCOPE_ALL_LABEL}</option>
@@ -630,6 +667,9 @@ function InnerForecastDashboard() {
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </Form.Select>
+          {activeSection === 'trajectory' && (
+            <button type="button" className="btn btn-sm btn-outline-secondary" onClick={resetFilters}>Reset filters</button>
+          )}
         </div>
       </PageHeader>
 
@@ -661,7 +701,7 @@ function InnerForecastDashboard() {
           <KpiCard
             icon={Target}
             title={label('forecastTotalMt') || 'Forecast production'}
-            value={forecastProductionMT != null ? forecastProductionMT : null}
+            value={slicedForecastTotal != null ? slicedForecastTotal : null}
             unit={unit('forecastTotalMt') || 'MT'}
             supporting={`Next ${forecastHorizon} month${forecastHorizon === 1 ? '' : 's'}${forecastRunDate ? ` · ${new Date(forecastRunDate).toLocaleDateString()}` : ''}`}
             info={definition('forecastTotalMt') + ' Source: model forecast run.'}
@@ -673,7 +713,7 @@ function InnerForecastDashboard() {
             title={label('changeVsRecentAvgPct') || 'Change vs recent average'}
             value={expectedChangePct != null ? expectedChangePct : null}
             unit={unit('changeVsRecentAvgPct') || '%'}
-            supporting={`Forecast vs recent historical average — same run as Direction and Confidence`}
+            supporting={`Forecast vs recent historical average — ${forecastHorizon === '12' ? 'same run as Direction and Confidence' : '12-month run'}`}
             info={definition('changeVsRecentAvgPct') + ' Source: latest forecast run.'}
             trend={{
               direction: direction === 'increasing' ? 'up' : direction === 'declining' ? 'down' : 'up',
@@ -957,7 +997,8 @@ function InnerForecastDashboard() {
           <Card.Header className="fc-card-header">
             <div className="d-flex align-items-center gap-2">
               <Target size={16} strokeWidth={2} />
-              <h5 className="fc-card-title mb-0">Forecast (next {forecastHorizon} month${forecastHorizon === 1 ? '' : 's'}) vs annual demand benchmark</h5>
+              <h5 className="fc-card-title mb-0">Forecast (next 12 months) vs annual demand benchmark</h5>
+              <small className="text-muted">Based on the 12-month forecast</small>
             </div>
           </Card.Header>
           <Card.Body className="fc-card-body">
