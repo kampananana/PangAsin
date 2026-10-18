@@ -1,327 +1,352 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { Row, Col, Card, Alert, Form, Button, Modal } from 'react-bootstrap';
+import ErrorBoundary from '../ErrorBoundary';
 import {
-  ComposedChart, Line, Area, Bar, BarChart, LabelList, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Legend, Cell, ReferenceArea, ReferenceLine, PieChart, Pie, AreaChart,
+  ComposedChart, Line, Area, Bar, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  CartesianGrid, Legend, Cell, ReferenceArea, ReferenceLine,
 } from 'recharts';
 import {
-  ChartLine, ChartArea, ChartColumn, TrendingUp, Zap, BoxSelect,
-  CalendarDays, Trophy, ClipboardList, Flag, Globe2, Boxes, ArrowUpRight, ArrowDownRight, Activity, ShieldCheck, Target,
+  ChartLine, ChartArea, CalendarDays, Target, Boxes, TrendingUp, ArrowUpRight, ArrowDownRight,
+  Activity, ShieldCheck, Clock, Flag, List, Table as TableIcon, Zap, Info,
 } from 'lucide-react';
-import { runForecast, getForecastRuns, getMunicipalityOutlook, getAdminMunicipalities, getAdminSupplyDemand, getAdminTrends } from '../../services/dataService';
+import {
+  runForecast, getForecastRuns, getMunicipalityOutlook, getAdminMunicipalities,
+  getAdminSupplyDemand, getAdminTrends, getAdminMonths,
+} from '../../services/dataService';
 import { useToast } from '../Toast';
 import { SkeletonBlock, SkeletonCards, SkeletonChart } from '../Skeleton';
 import { BRAND, STATUS } from '../../theme/colors';
 import PageHeader from './PageHeader';
+import KpiCard from '../ui/KpiCard';
+import KpiGrid from '../ui/KpiGrid';
+import ChartCard from '../ui/ChartCard';
+import ChartCaption from '../ChartCaption';
+import { formatMT } from '../../utils/volumeFormat';
+import {
+  label, unit, definition, methodName, TREND_LABELS, FORECAST_CONFIDENCE, DATA_SUFFICIENCY,
+  SCOPE_ALL_LABEL,
+} from '../../constants/labels';
 
-function trendPill(direction) {
-  const cls = direction === 'increasing' ? 'fc-trend-pill-up' : direction === 'declining' ? 'fc-trend-pill-down' : 'fc-trend-pill-flat';
-  const icon = direction === 'increasing' ? '\u2191' : direction === 'declining' ? '\u2193' : '\u2192';
-  const label = direction === 'increasing' ? 'Increasing' : direction === 'declining' ? 'Declining' : 'Stable';
-  return <span className={`fc-trend-pill ${cls}`}><span style={{ fontSize: 13 }}>{icon}</span>{label}</span>;
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/* ---------------------------------------------------------------
+   Safe helpers (never crash on null/undefined)
+   --------------------------------------------------------------- */
+
+function directionFromPct(changePct) {
+  if (changePct === null || changePct === undefined) return 'stable';
+  if (changePct > 2) return 'increasing';
+  if (changePct < -2) return 'declining';
+  return 'stable';
 }
 
-function formatMT(val) {
-  if (val === null || val === undefined) return '\u2014';
-  return `${Math.round(val).toLocaleString()} MT`;
+function directionLabel(d) {
+  return TREND_LABELS[d] || 'Stable';
 }
 
-function formatPct(val) {
-  if (val === null || val === undefined) return '\u2014';
+function directionTone(d) {
+  if (d === 'increasing') return 'good';
+  if (d === 'declining') return 'bad';
+  return 'neutral';
+}
+
+function formatPct1(val) {
+  if (val === null || val === undefined || !Number.isFinite(val)) return '\u2014';
   const sign = val > 0 ? '+' : '';
   return `${sign}${val.toFixed(1)}%`;
 }
 
-function StatShell({ icon: Icon, title, children, support, accent }) {
-  return (
-    <Col md={3} sm={6}>
-      <div className={`fc-stat fc-stat-accent-${accent}`}>
-        <div className={`fc-stat-icon fc-stat-icon-${accent}`}><Icon size={19} strokeWidth={2} /></div>
-        <div className="fc-stat-title">{title}</div>
-        <div>{children}</div>
-        <div className="fc-stat-support">{support}</div>
-      </div>
-    </Col>
-  );
+function formatPctSigned(val) {
+  if (val === null || val === undefined || !Number.isFinite(val)) return '\u2014';
+  const sign = val > 0 ? '+' : val < 0 ? '\u2212' : '';
+  return `${sign}${Math.abs(val).toFixed(1)}%`;
 }
 
-function AnimatedStat({ icon, title, value, support, accent, format }) {
-  const formatted = format ? format(value) : value;
-  return (
-    <StatShell icon={icon} title={title} support={support} accent={accent}>
-      <div className="fc-stat-value">{formatted}</div>
-    </StatShell>
-  );
+function monthLabel(ym) {
+  if (!ym) return '\u2014';
+  const m = parseInt(ym.slice(5, 7), 10);
+  const y = ym.slice(0, 4);
+  return `${MONTH_SHORT[m - 1]} ${y}`;
 }
 
-function PlainStat({ icon, title, value, support, accent, className }) {
-  return (
-    <StatShell icon={icon} title={title} support={support} accent={accent}>
-      <div className={`fc-stat-value ${className || ''}`}>{value}</div>
-    </StatShell>
-  );
+function sourceLine(dataset, filters) {
+  return `Source: ${dataset}${filters ? `, ${filters}` : ''}`;
 }
 
-function InsightCard({ title, icon: Icon, children, chip, col }) {
-  const colProps = { md: 4, ...(col || {}) };
-  return (
-    <Col {...colProps}>
-      <Card className="fc-card h-100">
-        <Card.Body className="fc-card-pad">
-          <div className="fc-insight-head mb-3">
-            <span className={`fc-insight-chip fc-insight-chip-${chip}`}><Icon size={16} strokeWidth={2} /></span>
-            <h6 className="fc-insight-title">{title}</h6>
-          </div>
-          {children}
-        </Card.Body>
-      </Card>
-    </Col>
-  );
+function na() {
+  return '\u2014';
 }
 
-function SectionHeading({ icon: Icon, title, sub, chip }) {
-  return (
-    <div className="d-flex align-items-center gap-2 mb-3">
-      <span className={`fc-insight-chip fc-insight-chip-${chip}`}><Icon size={16} strokeWidth={2} /></span>
-      <div>
-        <h6 className="fc-section-title mb-0">{title}</h6>
-        {sub && <div className="fc-section-sub">{sub}</div>}
-      </div>
-    </div>
-  );
-}
+/* ---------------------------------------------------------------
+   Sticky pill navigation
+   --------------------------------------------------------------- */
 
-function YoYBarLabel({ x, y, width, height, value }) {
-  if (value === null || value === undefined) return null;
-  const num = Number(value);
-  const label = `${num >= 0 ? '+' : ''}${num.toFixed(1)}%`;
-  const pad = 7;
-  if (num >= 0) {
-    return (
-      <text x={x + width + pad} y={y + height / 2} dy="0.35em" textAnchor="start" className="yoy-bar-label">
-        {label}
-      </text>
-    );
-  }
-  return (
-    <text x={x - pad} y={y + height / 2} dy="0.35em" textAnchor="end" className="yoy-bar-label">
-      {label}
-    </text>
-  );
-}
+const SECTIONS = [
+  { id: 'summary', label: 'Summary' },
+  { id: 'trajectory', label: 'Past to future' },
+  { id: 'demand', label: 'Demand check' },
+  { id: 'municipality', label: 'By municipality' },
+  { id: 'method', label: 'How it was made' },
+];
 
-function YoyTooltip({ active, payload }) {
-  if (!active || !payload || payload.length === 0) return null;
-  const d = payload[0].payload;
+function PillNav({ activeId, onSelect }) {
   return (
-    <div className="fc-tooltip">
-      <div className="fc-tooltip-label">{d.name}</div>
-      <div className="fc-tooltip-row"><span>Current year</span><b>{d.current.toLocaleString()} MT</b></div>
-      <div className="fc-tooltip-row"><span>Previous year</span><b>{d.previous.toLocaleString()} MT</b></div>
-      <div className="fc-tooltip-row">
-        <span>YoY change</span>
-        <b>{d.changePct === null || d.changePct === undefined ? '\u2014' : formatPct(d.changePct)}</b>
-      </div>
-    </div>
-  );
-}
-
-function yoyCaption(rows) {
-  const withData = rows.filter((m) => m.changePct !== null && m.changePct !== undefined);
-  if (withData.length === 0) return null;
-  const top = [...withData].sort((a, b) => b.changePct - a.changePct)[0];
-  const bottom = [...withData].sort((a, b) => a.changePct - b.changePct)[0];
-  const bottomVerb = bottom.changePct < 0 ? 'declined most at' : 'grew the least at';
-  if (bottom.name === top.name) {
-    return (
-      <div className="chart-caption">
-        <b>{top.name}</b> led YoY growth at <b>{formatPct(top.changePct)}</b>.
-      </div>
-    );
-  }
-  return (
-    <div className="chart-caption">
-      <b>{top.name}</b> led YoY change at <b>{formatPct(top.changePct)}</b>
-      {' '}· <b>{bottom.name}</b> {bottomVerb} <b>{formatPct(bottom.changePct)}</b>.
-    </div>
-  );
-}
-
-function ForecastTooltip({ active, payload, label }) {
-  if (!active || !payload || payload.length === 0) return null;
-  const rows = payload.filter((p) => p.value !== null && p.value !== undefined && p.name !== 'Previous forecast');
-  const prev = payload.find((p) => p.name === 'Previous forecast');
-  return (
-    <div className="fc-tooltip">
-      <div className="fc-tooltip-label">{label}</div>
-      {rows.map((p, i) => (
-        <div className="fc-tooltip-row" key={i}>
-          <span>{p.name}</span>
-          <b>{Number(p.value).toLocaleString(undefined, { maximumFractionDigits: 3 })} MT</b>
-        </div>
+    <nav className="fc-pill-nav" aria-label="Section navigation">
+      {SECTIONS.map((s) => (
+        <button
+          key={s.id}
+          type="button"
+          className={`fc-pill ${activeId === s.id ? 'fc-pill--active' : ''}`}
+          onClick={() => onSelect(s.id)}
+          aria-current={activeId === s.id ? 'true' : 'false'}
+        >
+          {s.label}
+        </button>
       ))}
-      {prev && (
-        <div className="fc-tooltip-row" style={{ color: '#b6c6e2' }}>
-          <span>Prev forecast</span>
-          <b>{Number(prev.value).toLocaleString(undefined, { maximumFractionDigits: 3 })} MT</b>
-        </div>
-      )}
-    </div>
+    </nav>
   );
 }
 
-function SeasonTooltip({ active, payload }) {
-  if (!active || !payload || payload.length === 0) return null;
-  const d = payload[0].payload;
-  return (
-    <div className="fc-tooltip">
-      <div className="fc-tooltip-label">{d.label}</div>
-      <div className="fc-tooltip-row"><span>Projected</span><b>{Number(d.value).toLocaleString(undefined, { maximumFractionDigits: 3 })} MT</b></div>
-    </div>
-  );
-}
+/* ===============================================================
+   Main component
+   =============================================================== */
 
-const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-function computeInsights(currentRun, outlook, demandBenchmark) {
-  const insights = {
-    seasonal: { peak: '\u2014', low: '\u2014', pattern: 'No forecast data available.', series: [] },
-    ranking: { top: null, bottom: null },
-    supplyDemand: { gap: 0, label: '\u2014', detail: 'No forecast data available.', pct: null },
-    flags: { declining: [], growing: [] },
-    regional: { total: '\u2014', detail: 'No forecast data available.', pct: null },
-  };
-
-  if (!currentRun) return insights;
-
-  if (currentRun.points && currentRun.points.length > 0) {
-    const forecastPoints = currentRun.points.filter((p) => p.is_forecast);
-
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const monthlyTotals = {};
-    forecastPoints.forEach((p) => {
-      const ym = p.period_label;
-      if (!monthlyTotals[ym]) monthlyTotals[ym] = 0;
-      monthlyTotals[ym] += p.predicted_value || 0;
-    });
-
-    const sortedMonths = Object.entries(monthlyTotals).sort((a, b) => b[1] - a[1]);
-    if (sortedMonths.length > 0) {
-      const peakMonth = sortedMonths[0][0];
-      const lowMonth = sortedMonths[sortedMonths.length - 1][0];
-      const peakIdx = parseInt(peakMonth.split('-')[1], 10) - 1;
-      const lowIdx = parseInt(lowMonth.split('-')[1], 10) - 1;
-      insights.seasonal.peak = monthNames[peakIdx] || peakMonth;
-      insights.seasonal.low = monthNames[lowIdx] || lowMonth;
-    }
-
-    insights.seasonal.series = forecastPoints
-      .map((p) => {
-        const month = parseInt(p.period_label.split('-')[1], 10);
-        return {
-          month,
-          label: monthNames[month - 1] || p.period_label,
-          value: p.predicted_value || 0,
-        };
-      })
-      .filter((p) => p.month >= 1 && p.month <= 12)
-      .sort((a, b) => a.month - b.month);
-  }
-
-  if (currentRun.projected_total !== null && currentRun.projected_total !== undefined) {
-    const projectedMT = currentRun.projected_total;
-    if (demandBenchmark !== null && demandBenchmark !== undefined && demandBenchmark > 0) {
-      const gap = Math.round(projectedMT - demandBenchmark);
-      const sign = gap >= 0 ? '+' : '';
-      insights.supplyDemand.gap = gap;
-      insights.supplyDemand.label = `${sign}${gap.toLocaleString()} MT`;
-      insights.supplyDemand.detail = `Projected: ${Math.round(projectedMT).toLocaleString()} MT vs demand benchmark: ${demandBenchmark.toLocaleString()} MT.`;
-      insights.supplyDemand.pct = (projectedMT / demandBenchmark) * 100;
-    }
-  }
-
-  if (outlook && outlook.length > 0) {
-    const withChange = outlook.filter((o) => o.expected_change_pct !== null && o.expected_change_pct !== undefined);
-    if (withChange.length > 0) {
-      const sorted = [...withChange].sort((a, b) => b.expected_change_pct - a.expected_change_pct);
-      insights.ranking.top = sorted[0];
-      insights.ranking.bottom = sorted[sorted.length - 1];
-    }
-
-    insights.flags.declining = outlook.filter((o) => o.trend_direction === 'declining' || (o.expected_change_pct !== null && o.expected_change_pct < -10));
-    insights.flags.growing = outlook.filter((o) => o.expected_change_pct !== null && o.expected_change_pct > 15);
-  }
-
-  if (currentRun.projected_total !== null && currentRun.projected_total !== undefined) {
-    insights.regional.total = `${Math.round(currentRun.projected_total).toLocaleString()} MT`;
-    if (demandBenchmark !== null && demandBenchmark !== undefined && demandBenchmark > 0) {
-      insights.regional.pct = (currentRun.projected_total / demandBenchmark) * 100;
-    }
-    const demandGap = currentRun.projected_total - demandBenchmark;
-    if (demandGap >= 0) {
-      insights.regional.detail = `Combined projected supply across all municipalities is expected to exceed the demand benchmark by ${Math.abs(Math.round(demandGap)).toLocaleString()} MT.`;
-    } else {
-      insights.regional.detail = `Combined projected supply across all municipalities falls short of the demand benchmark by ${Math.abs(Math.round(demandGap)).toLocaleString()} MT.`;
-    }
-  }
-
-  return insights;
-}
-
-export default function ForecastDashboard() {
+function InnerForecastDashboard() {
   const { toastSuccess, toastError } = useToast();
+
   const [municipalities, setMunicipalities] = useState([]);
-  const [selectedMuni, setSelectedMuni] = useState('all');
   const [runs, setRuns] = useState([]);
-  const [currentRun, setCurrentRun] = useState(null);
-  const [outlook, setOutlook] = useState([]);
-  const [demandBenchmark, setDemandBenchmark] = useState(null);
-  const [yoyRows, setYoyRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState(null);
-  const [view, setView] = useState('line');
-  const [showBand, setShowBand] = useState(true);
   const [selectedRunId, setSelectedRunId] = useState(null);
-  const [showForecastModal, setShowForecastModal] = useState(false);
+  const [outlook, setOutlook] = useState([]);
+  const [supplyDemand, setSupplyDemand] = useState(null);
+  const [trends, setTrends] = useState([]);
+  const [adminMonths, setAdminMonths] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [activeSection, setActiveSection] = useState('summary');
+  const [selectedMuni, setSelectedMuni] = useState('all');
   const [forecastHorizon, setForecastHorizon] = useState(12);
   const [forecastNotes, setForecastNotes] = useState('');
+  const [showForecastModal, setShowForecastModal] = useState(false);
+
+  /* ---------------- Data loading ---------------- */
 
   useEffect(() => {
-    getAdminMunicipalities()
-      .then((res) => setMunicipalities(res.municipalities || []))
-      .catch(() => {});
-    getMunicipalityOutlook()
-      .then((res) => setOutlook(res.municipalities || []))
-      .catch(() => {});
-    getAdminSupplyDemand()
-      .then((res) => setDemandBenchmark(res?.pangasinan?.demand_volume ?? null))
-      .catch(() => {});
-    getAdminTrends()
-      .then((res) => setYoyRows(res.municipalities || []))
-      .catch(() => {});
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      getAdminMunicipalities().then((res) => setMunicipalities(res.municipalities || [])).catch(() => setMunicipalities([])),
+      getMunicipalityOutlook().then((res) => setOutlook(res.municipalities || [])).catch(() => setOutlook([])),
+      getAdminSupplyDemand().then((res) => setSupplyDemand(res)).catch(() => setSupplyDemand(null)),
+      getAdminTrends().then((res) => setTrends(res.municipalities || [])).catch(() => setTrends([])),
+      getAdminMonths().then((res) => setAdminMonths(res.months || [])).catch(() => setAdminMonths([])),
+    ]).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    setCurrentRun(null);
-    setSelectedRunId(null);
-    setRuns([]);
-    const params = selectedMuni !== 'all' ? { municipality_id: selectedMuni } : {};
+    const params = selectedMuni !== 'all' ? { municipality_id: Number(selectedMuni) } : {};
     getForecastRuns(params)
       .then((res) => {
         const runsList = res.runs || [];
         setRuns(runsList);
-        if (runsList.length > 0) {
-          setCurrentRun(runsList[0]);
-        } else {
-          setCurrentRun(null);
+        if (runsList.length > 0 && !selectedRunId) {
+          setSelectedRunId(String(runsList[0].id));
         }
         setLoading(false);
       })
-      .catch((err) => { setError(err.message); setLoading(false); });
-  }, [selectedMuni]);
+      .catch((err) => { setError(err.message || 'Failed to load forecast runs.'); setLoading(false); });
+  }, [selectedMuni, selectedRunId]);
+
+  const selectedRun = useMemo(() => runs.find((r) => String(r.id) === String(selectedRunId)) || (runs[0] || null), [runs, selectedRunId]);
+
+  const selectedMuniName = useMemo(() => {
+    if (selectedMuni === 'all') return SCOPE_ALL_LABEL;
+    const m = municipalities.find((x) => String(x.id) === String(selectedMuni));
+    return m ? m.name : '\u2014';
+  }, [selectedMuni, municipalities]);
+
+  /* ---------------- Derived data ---------------- */
+
+  const latestRecordMonth = useMemo(() => {
+    if (!adminMonths || adminMonths.length === 0) return null;
+    return adminMonths[adminMonths.length - 1];
+  }, [adminMonths]);
+
+  const latestRunTime = useMemo(() => {
+    if (!runs || runs.length === 0) return null;
+    const sorted = [...runs].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    return sorted[0].created_at || null;
+  }, [runs]);
+
+  const chartData = useMemo(() => {
+    if (!selectedRun || !selectedRun.points) return [];
+    return selectedRun.points.map((p) => ({
+      label: p.period_label,
+      labelShort: monthLabel(p.period_label),
+      historical: p.is_forecast ? null : (p.predicted_value != null ? p.predicted_value : null),
+      forecast: p.is_forecast ? (p.predicted_value != null ? p.predicted_value : null) : null,
+      lower: p.lower_bound != null ? p.lower_bound : null,
+      upper: p.upper_bound != null ? p.upper_bound : null,
+      isForecast: p.is_forecast,
+    }));
+  }, [selectedRun]);
+
+  const historyPoints = chartData.filter((d) => !d.isForecast && d.historical != null);
+  const forecastPoints = chartData.filter((d) => d.isForecast && d.forecast != null);
+  const forecastStartIdx = chartData.findIndex((d) => d.isForecast);
+
+  const incompleteMonths = useMemo(() => {
+    if (chartData.length === 0) return [];
+    const hist = chartData.filter((d) => !d.isForecast);
+    const recent = hist.slice(-6);
+    return recent.filter((d) => d.historical === null || d.historical === undefined);
+  }, [chartData]);
+
+  const hasIncompleteTail = selectedRun ? Boolean(selectedRun.incomplete_tail) : incompleteMonths.length > 0;
+
+  const recordedProductionMT = useMemo(() => {
+    if (historyPoints.length === 0) return null;
+    return historyPoints.reduce((sum, d) => sum + (d.historical || 0), 0);
+  }, [historyPoints]);
+
+  const forecastProductionMT = useMemo(() => {
+    if (!selectedRun || selectedRun.projected_total == null) return null;
+    return selectedRun.projected_total;
+  }, [selectedRun]);
+
+  const expectedChangePct = useMemo(() => {
+    if (!selectedRun || selectedRun.expected_change_pct == null) return null;
+    return selectedRun.expected_change_pct;
+  }, [selectedRun]);
+
+  const direction = useMemo(() => directionFromPct(expectedChangePct), [expectedChangePct]);
+
+  const forecastConfidence = useMemo(() => {
+    if (!selectedRun) return null;
+    return selectedRun.reliability || null;
+  }, [selectedRun]);
+
+  const forecastMethod = useMemo(() => {
+    if (!selectedRun) return null;
+    return selectedRun.algorithm || null;
+  }, [selectedRun]);
+
+  const forecastRunDate = useMemo(() => {
+    if (!selectedRun || !selectedRun.created_at) return null;
+    return selectedRun.created_at;
+  }, [selectedRun]);
+
+  const demandBenchmark = useMemo(() => {
+    if (!supplyDemand || !supplyDemand.pangasinan) return null;
+    return supplyDemand.pangasinan.demand_volume != null ? supplyDemand.pangasinan.demand_volume : null;
+  }, [supplyDemand]);
+
+  const demandSource = useMemo(() => {
+    if (!supplyDemand || !supplyDemand.pangasinan) return null;
+    return {
+      sourceName: supplyDemand.pangasinan.source_name || '\u2014',
+      year: supplyDemand.pangasinan.year || '\u2014',
+    };
+  }, [supplyDemand]);
+
+  const demandShortfallMT = useMemo(() => {
+    if (demandBenchmark == null || forecastProductionMT == null) return null;
+    return demandBenchmark - forecastProductionMT;
+  }, [demandBenchmark, forecastProductionMT]);
+
+  const demandCoveredPct = useMemo(() => {
+    if (demandBenchmark == null || demandBenchmark <= 0 || forecastProductionMT == null) return null;
+    return (forecastProductionMT / demandBenchmark) * 100;
+  }, [demandBenchmark, forecastProductionMT]);
+
+  const muniExpectedChange = useMemo(() => {
+    return [...outlook]
+      .filter((o) => o.expected_change_pct !== null && o.expected_change_pct !== undefined)
+      .map((o) => ({
+        name: o.municipality_name,
+        id: o.municipality_id,
+        change: o.expected_change_pct,
+        trend: directionFromPct(o.expected_change_pct),
+        readiness: o.readiness,
+        reliability: o.reliability,
+        algorithm: o.algorithm,
+        lastRunAt: o.last_run_at,
+      }))
+      .sort((a, b) => b.change - a.change);
+  }, [outlook]);
+
+  const muniNoForecast = useMemo(() => {
+    return [...outlook]
+      .filter((o) => o.expected_change_pct == null || o.expected_change_pct === undefined)
+      .map((o) => o.municipality_name);
+  }, [outlook]);
+
+  const needsAttention = useMemo(() => {
+    return [...outlook].filter((o) => {
+      const dir = directionFromPct(o.expected_change_pct);
+      const lowConf = o.reliability === 'low';
+      const incomplete = o.readiness === 'not_ready' || o.readiness === 'limited';
+      return dir === 'declining' || lowConf || incomplete;
+    }).map((o) => {
+      const reasons = [];
+      const dir = directionFromPct(o.expected_change_pct);
+      if (dir === 'declining') reasons.push('Declining direction');
+      if (o.reliability === 'low') reasons.push('Low forecast confidence');
+      if (o.readiness === 'not_ready') reasons.push('Insufficient data');
+      else if (o.readiness === 'limited') reasons.push('Limited data');
+      return {
+        name: o.municipality_name,
+        id: o.municipality_id,
+        change: o.expected_change_pct,
+        trend: dir,
+        readiness: o.readiness,
+        reliability: o.reliability,
+        reasons,
+      };
+    });
+  }, [outlook]);
+
+  const yoyRows = useMemo(() => {
+    return (trends || [])
+      .map((m) => ({
+        name: m.name,
+        changePct: m.changePct != null ? m.changePct : null,
+        current: m.current,
+        previous: m.previous,
+        hasData: m.changePct != null && m.current != null && m.previous != null,
+      }))
+      .sort((a, b) => {
+        if (!a.hasData && !b.hasData) return 0;
+        if (!a.hasData) return 1;
+        if (!b.hasData) return -1;
+        return b.changePct - a.changePct;
+      });
+  }, [trends]);
+
+  const muniSummaryTable = useMemo(() => {
+    return [...outlook].map((o) => {
+      const dir = directionFromPct(o.expected_change_pct);
+      const conf = o.reliability || 'low';
+      const suff = o.readiness || 'not_ready';
+      return {
+        name: o.municipality_name,
+        id: o.municipality_id,
+        forecastMT: null,
+        changePct: o.expected_change_pct,
+        direction: dir,
+        confidence: conf,
+        sufficiency: suff,
+        method: o.algorithm || 'none',
+        lastRun: o.last_run_at ? new Date(o.last_run_at).toLocaleDateString() : '\u2014',
+        hasForecast: o.expected_change_pct != null,
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  }, [outlook]);
+
+  /* ---------------- Actions ---------------- */
 
   const openForecastModal = () => setShowForecastModal(true);
 
@@ -334,11 +359,13 @@ export default function ForecastDashboard() {
     };
     runForecast(payload)
       .then((res) => {
-        setCurrentRun(res.run);
-        toastSuccess(`Forecast${res.run?.id ? ` run #${res.run.id}` : ''} has been generated.`, 'Forecast complete');
-        return getForecastRuns(selectedMuni !== 'all' ? { municipality_id: selectedMuni } : {});
+        toastSuccess(`Forecast run #${res.run.id} has been generated.`, 'Forecast complete');
+        return getForecastRuns(selectedMuni !== 'all' ? { municipality_id: Number(selectedMuni) } : {});
       })
-      .then((res) => setRuns(res.runs || []))
+      .then((res) => {
+        setRuns(res.runs || []);
+        if (res.runs && res.runs.length > 0) setSelectedRunId(String(res.runs[0].id));
+      })
       .catch((err) => {
         const message = err.message || 'Could not run the forecast.';
         setError(message);
@@ -347,573 +374,876 @@ export default function ForecastDashboard() {
       .finally(() => { setRunning(false); setShowForecastModal(false); });
   };
 
-  const handleRunSelect = (id) => {
-    const run = runs.find((r) => String(r.id) === String(id));
-    if (run) {
-      setCurrentRun(run);
-      setSelectedRunId(String(run.id));
+  const handleRunSelect = (id) => setSelectedRunId(String(id));
+
+  const scrollToSection = (id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      const navHeight = 60;
+      const top = el.getBoundingClientRect().top + window.scrollY - navHeight - 10;
+      window.scrollTo({ top, behavior: 'smooth' });
+      setActiveSection(id);
     }
   };
 
-  const selectedRun = useMemo(() => runs.find((r) => String(r.id) === String(selectedRunId)) || runs[0] || null, [runs, selectedRunId]);
-  const prevRun = useMemo(() => {
-    if (!selectedRun) return null;
-    const idx = runs.findIndex((r) => String(r.id) === String(selectedRun.id));
-    return idx > 0 ? runs[idx - 1] : null;
-  }, [runs, selectedRun]);
+  /* ---------------- Headline sentence (computed before early returns) ---------------- */
 
-  const chartData = useMemo(() => {
-    if (!currentRun || !currentRun.points) return [];
-    return currentRun.points.map((p) => ({
-      label: p.period_label,
-      production: p.predicted_value,
-      historical: p.is_forecast ? null : p.predicted_value,
-      forecast: p.is_forecast ? p.predicted_value : null,
-      lower: p.lower_bound,
-      upper: p.upper_bound,
-      isForecast: p.is_forecast,
-    }));
-  }, [currentRun]);
+  const headlineSentence = useMemo(() => {
+    if (forecastProductionMT == null) {
+      return 'No forecast has been generated yet. Run a forecast to see projected production.';
+    }
+    let sentence = `Forecast production for the next 12 months is ${formatMT(forecastProductionMT)}`;
+    if (demandShortfallMT != null) {
+      const verb = demandShortfallMT >= 0 ? 'exceeds' : 'falls short of';
+      const abs = Math.abs(demandShortfallMT);
+      sentence += `, which ${verb} salt demand by ${formatMT(abs)}`;
+    }
+    sentence += `. Direction: ${directionLabel(direction)}.`;
+    return sentence;
+  }, [forecastProductionMT, demandShortfallMT, direction]);
 
-  const prevChartData = useMemo(() => {
-    if (!prevRun || !prevRun.points) return chartData;
-    const byLabel = {};
-    prevRun.points.forEach((p) => {
-      byLabel[p.period_label] = p;
-    });
-    return chartData.map((d) => {
-      const pp = byLabel[d.label];
-      return { ...d, prev_forecast: pp && pp.is_forecast ? pp.predicted_value : null };
-    });
-  }, [prevRun, chartData]);
+  const demandAssumption = useMemo(() => {
+    if (demandShortfallMT == null) {
+      return 'Missing demand benchmark or forecast \u2014 assumption cannot be computed.';
+    }
+    const covered = demandCoveredPct != null ? demandCoveredPct.toFixed(1) + '%' : 'n/a';
+    if (demandShortfallMT <= 0) {
+      return `Assumption: Forecast production meets or exceeds salt demand. Forecast covers ${covered} of demand. Gap = salt demand \u2212 forecast production.`;
+    }
+    return `Assumption: Forecast production is below salt demand; gap = salt demand \u2212 forecast production. Forecast covers ${covered} of demand.`;
+  }, [demandShortfallMT, demandCoveredPct]);
 
-  const muniChartData = useMemo(() => {
-    return [...outlook]
-      .map((o) => ({
-        name: o.municipality_name,
-        change: o.expected_change_pct ?? 0,
-        trend: o.trend_direction || 'stable',
-        readiness: o.readiness,
-      }))
-      .sort((a, b) => b.change - a.change);
-  }, [outlook]);
+  const kpiLoading = loading || !selectedRun;
 
-  const muniBarColor = useCallback((trend) => {
-    if (trend === 'increasing') return BRAND.green;
-    if (trend === 'declining') return STATUS.not_ready;
-    return BRAND.gold;
-  }, []);
-
-  const insights = useMemo(() => computeInsights(currentRun, outlook, demandBenchmark), [currentRun, outlook, demandBenchmark]);
-
-  const yoyAbsMax = useMemo(() => {
-    const peaks = yoyRows.map((m) => Math.abs(m.changePct || 0));
-    return Math.max(1, ...peaks);
-  }, [yoyRows]);
+  /* ---------------- Loading / error states ---------------- */
 
   if (loading) {
     return (
       <div className="skeleton-dashboard">
         <SkeletonBlock width="45%" height={24} />
         <SkeletonBlock width="70%" height={13} />
-        <div className="mt-4"><SkeletonCards count={3} /></div>
+        <div className="mt-4"><SkeletonCards count={5} /></div>
         <div className="skeleton-card"><SkeletonChart height={320} /></div>
+        <div className="skeleton-card"><SkeletonChart height={240} /></div>
       </div>
     );
   }
+
   if (error) {
     return <Alert variant="danger">{error}</Alert>;
   }
 
-  const projectedMT = currentRun?.projected_total ?? 0;
-
-  const sdPct = insights.supplyDemand.pct;
-  const sdBarPct = sdPct == null ? 0 : Math.max(0, Math.min(100, sdPct));
-  const sdColor = insights.supplyDemand.gap < 0 ? STATUS.not_ready : BRAND.green;
-
-  const gaugePct = insights.regional.pct == null ? 0 : Math.max(0, Math.min(100, insights.regional.pct));
-  const gaugeData = [
-    { value: gaugePct },
-    { value: 100 - gaugePct },
-  ];
-  const gaugeFill = gaugePct >= 100 ? BRAND.green : gaugePct >= 80 ? BRAND.gold : STATUS.not_ready;
+  /* ===============================================================
+     Render
+     =============================================================== */
 
   return (
-    <div>
+    <div className="admin-single-page forecast-page">
+      {/* ============ Header ============ */}
       <PageHeader
-        id="admin-forecast"
+        id="admin-forecast-header"
         variant="sub"
-        title="Forecasting &amp; Production Outlook"
-        subtitle="Province-wide and municipality-level production projections anchored to validated historical records."
+        title="Forecast &amp; Production Outlook"
+        subtitle={`Chronological forecast story for ${selectedMuniName}. Data-backed KPIs, trajectory, demand check, and per-municipality outlook.`}
       >
-        <div className="admin-page-hero-control">
-          <label className="admin-page-hero-field" htmlFor="fc-muni">Municipality</label>
-          <Form.Select id="fc-muni" className="admin-page-hero-select" value={selectedMuni} onChange={(e) => setSelectedMuni(e.target.value)}>
-            <option value="all">Pangasinan</option>
+        <div className="fc-header-meta">
+          <span className="fc-data-as-of">
+            <span className="fc-meta-label">Data as of</span>
+            <span className="fc-meta-value">
+              {latestRecordMonth ? monthLabel(latestRecordMonth) : na()}
+              {latestRunTime ? ` \u00b7 latest forecast run ${new Date(latestRunTime).toLocaleString()}` : ''}
+            </span>
+          </span>
+        </div>
+        <div className="fc-filter-row">
+          <label className="fc-filter-label" htmlFor="forecast-muni-scope">Municipality scope</label>
+          <Form.Select id="forecast-muni-scope" className="fc-filter-select" value={selectedMuni} onChange={(e) => setSelectedMuni(e.target.value)} aria-label="Municipality scope">
+            <option value="all">{SCOPE_ALL_LABEL}</option>
             {municipalities.map((m) => (
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </Form.Select>
-        </div>
-        <div className="admin-page-hero-control">
-          <label className="admin-page-hero-field" htmlFor="fc-run">Forecast Run</label>
-          <Form.Select id="fc-run" className="admin-page-hero-select" value={selectedRunId || ''} onChange={(e) => handleRunSelect(e.target.value)}>
+          <label className="fc-filter-label" htmlFor="forecast-run-select">Forecast run</label>
+          <Form.Select id="forecast-run-select" className="fc-filter-select" value={selectedRunId || ''} onChange={(e) => handleRunSelect(e.target.value)} aria-label="Forecast run">
             {!selectedRunId && <option value="">Latest run</option>}
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.municipality_name || 'All'} &middot; {r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}
+                {r.municipality_name || SCOPE_ALL_LABEL} \u00b7 {new Date(r.created_at).toLocaleDateString()}
                 {r.projected_total != null ? ` (${formatMT(r.projected_total)})` : ''}
               </option>
             ))}
           </Form.Select>
+          <Button variant="outline-secondary" size="sm" onClick={openForecastModal} disabled={running} className="fc-run-btn">
+            {running ? <span role="status" aria-label="Running">Running\u2026</span> : 'Run Forecast'}
+          </Button>
         </div>
       </PageHeader>
 
-      <Row className="g-3 mb-3">
-        <AnimatedStat
-          icon={Boxes}
-          title="Projected Production"
-          value={projectedMT}
-          accent="ocean"
-          support="in metric tons across the forecast period"
-          format={(v) => formatMT(v)}
-        />
-        <AnimatedStat
-          icon={ArrowUpRight}
-          title="Expected Change"
-          value={currentRun?.expected_change_pct ?? 0}
-          accent="gold"
-          support="vs the previous period"
-          format={(v) => {
-            const sign = v > 0 ? '+' : '';
-            return `${sign}${v.toFixed(1)}%`;
-          }}
-        />
-        <PlainStat
-          icon={Activity}
-          title="Trend Direction"
-          accent="green"
-          support={currentRun?.trend_direction ? `Trajectory: ${currentRun.trend_direction}` : 'Based on validated historical data'}
-          value={currentRun ? trendIconLarge(currentRun.trend_direction) : '\u2014'}
-          className="text-capitalize"
-        />
-        <PlainStat
-          icon={ShieldCheck}
-          title="Forecast Reliability"
-          accent="purple"
-          support="linked to available validated data"
-          value={currentRun?.reliability || '\u2014'}
-          className="text-capitalize"
-        />
-      </Row>
-
-      {currentRun?.incomplete_tail && (
-        <Alert variant="warning" className="mb-3">
-          <strong>Partial current-year reporting.</strong>{' '}
-          {currentRun.note || 'Recent months may be under-reported because the current year is still in progress. The forecast is anchored to the established seasonal pattern.'}
-        </Alert>
-      )}
-
-      <div className="fc-province-band mb-3">
-        <SectionHeading
-          icon={Globe2}
-          title="Province-wide outlook"
-          sub="Independent of the municipality filter above."
-          chip="teal"
-        />
-        <Row className="g-3">
-          <InsightCard
-            title={`Supply-Demand Gap${insights.supplyDemand.gap < 0 ? ' (shortfall)' : ''}`}
-            icon={ClipboardList}
-            chip={insights.supplyDemand.gap < 0 ? 'orange' : 'teal'}
-            col={{ md: 6 }}
-          >
-            {currentRun ? (
-              <div>
-                <div className="fc-insight-stat" style={{ color: sdColor }}>
-                  {insights.supplyDemand.label}
-                </div>
-                <div className="fc-insight-bar">
-                  <div className="fc-insight-bar-fill" style={{ width: `${sdBarPct}%`, background: sdColor }} />
-                </div>
-                <div className="fc-insight-caption">
-                  Supply covers {Math.round(sdBarPct)}% of the demand benchmark
-                </div>
-              </div>
-            ) : (
-              <p className="text-muted small mb-0">No forecast data available.</p>
-            )}
-          </InsightCard>
-
-          <InsightCard title="Regional Outlook" icon={Globe2} chip="teal" col={{ md: 6 }}>
-            {insights.regional.pct !== null && insights.regional.pct !== undefined && currentRun ? (
-              <div className="d-flex align-items-center gap-3">
-                <div className="fc-gauge">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={gaugeData} dataKey="value" cx="50%" cy="50%" innerRadius={42} outerRadius={58} startAngle={90} endAngle={-270} stroke="none" isAnimationActive={false}>
-                        <Cell fill={gaugeFill} />
-                        <Cell fill="rgba(21,35,58,0.08)" />
-                      </Pie>
-                      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" className="fc-gauge-centered">
-                        {Math.min(999, Math.round(insights.regional.pct))}%
-                      </text>
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div>
-                  <div className="fc-gauge-label">% of demand met</div>
-                  <div className="fc-insight-caption">
-                    {insights.regional.total} projected supply
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="text-muted small mb-0">No forecast data available.</p>
-            )}
-          </InsightCard>
-        </Row>
+      {/* ============ Sticky Pill Nav ============ */}
+      <div className="fc-nav-wrap">
+        <PillNav activeId={activeSection} onSelect={scrollToSection} />
       </div>
 
-      <SectionHeading
-        icon={ChartLine}
-        title="Production trajectory"
-        sub="Forecast shape for the selected scope."
-        chip="ocean"
-      />
-      <Row className="g-3 mb-3">
-        <Col lg={12}>
-          <Card className="fc-card h-100">
-            <Card.Body className="fc-card-pad">
-              <div className="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3 mb-3">
-                <div className="fc-card-title mb-0">
-                  <TrendingUp size={16} strokeWidth={2} />
-                  Historical vs Forecast Production
-                </div>
-                <div className="d-flex align-items-center gap-3 flex-wrap">
-                  {prevRun && (
-                    <span className="fc-prev-chip">
-                      <span className="fc-prev-swatch" />
-                      Prev run ({prevRun.created_at ? new Date(prevRun.created_at).toLocaleDateString() : '—'})
-                    </span>
-                  )}
-                  <div className="fc-segmented">
-                    <button className={`fc-segmented-btn ${view === 'line' ? 'active' : ''}`} onClick={() => setView('line')}>
-                      <ChartLine size={14} strokeWidth={2} /> Line
-                    </button>
-                    <button className={`fc-segmented-btn ${view === 'area' ? 'active' : ''}`} onClick={() => setView('area')}>
-                      <ChartArea size={14} strokeWidth={2} /> Area
-                    </button>
-                  </div>
-                  <button
-                    className={`fc-segmented-btn ${showBand ? 'active' : ''}`}
-                    style={{ border: '1px solid var(--gray-200)', borderRadius: 8, padding: '0.35rem 0.7rem', background: showBand ? 'var(--gray-100)' : 'transparent' }}
-                    onClick={() => setShowBand(!showBand)}
-                    title="Toggle confidence band"
-                  >
-                    <BoxSelect size={14} strokeWidth={2} /> Band
-                  </button>
-                </div>
-              </div>
-
-              {!currentRun && (
-                <div className="fc-empty">
-                  <Zap size={22} strokeWidth={2} />
-                  No forecast generated yet. Click <strong>Run Forecast</strong> to create one.
-                </div>
-              )}
-
-              {currentRun && (
-                <div style={{ height: 380 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={prevChartData} margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
-                      <defs>
-                        <linearGradient id="forecastBand" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={BRAND.ocean} stopOpacity={0.15} />
-                          <stop offset="95%" stopColor={BRAND.ocean} stopOpacity={0.02} />
-                        </linearGradient>
-                        <linearGradient id="fcAreaFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={BRAND.ocean} stopOpacity={0.35} />
-                          <stop offset="95%" stopColor={BRAND.ocean} stopOpacity={0.02} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" />
-                      <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                      <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${Math.round(v).toLocaleString()}`} />
-                      <Tooltip content={<ForecastTooltip />} />
-                      <Legend />
-                      {showBand && view === 'line' && (
-                        <>
-                          <Area type="monotone" dataKey="upper" stroke="none" fill="url(#forecastBand)" name="Upper bound" connectNulls />
-                          <Area type="monotone" dataKey="lower" stroke="none" fill="url(#forecastBand)" name="Lower bound" connectNulls />
-                        </>
-                      )}
-                      <Line type="monotone" dataKey="historical" stroke={BRAND.ocean} strokeWidth={3} dot={false} name="Historical" connectNulls isAnimationActive />
-                      {view === 'line' && (
-                        <Line
-                          type="monotone"
-                          dataKey="forecast"
-                          stroke={BRAND.gold}
-                          strokeWidth={3}
-                          strokeDasharray="6 4"
-                          dot={false}
-                          name="Forecast"
-                          connectNulls
-                          isAnimationActive
-                        />
-                      )}
-                      {view === 'area' && (
-                        <Area
-                          type="monotone"
-                          dataKey="forecast"
-                          stroke={BRAND.gold}
-                          strokeWidth={3}
-                          strokeDasharray="6 4"
-                          fill="url(#fcAreaFill)"
-                          dot={false}
-                          name="Forecast"
-                          connectNulls
-                          isAnimationActive
-                        />
-                      )}
-                      {prevRun && (
-                        <Line
-                          type="monotone"
-                          dataKey="prev_forecast"
-                          stroke="var(--gray-400)"
-                          strokeWidth={2}
-                          strokeDasharray="2 3"
-                          dot={false}
-                          name="Previous forecast"
-                          connectNulls
-                          isAnimationActive
-                        />
-                      )}
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-
-      <Row className="g-3 mb-3">
-        <InsightCard title="Seasonal Trend" icon={CalendarDays} chip="gold" col={{ lg: 12, md: 12 }}>
-          {insights.seasonal.series.length > 1 ? (
-            <div>
-              <div style={{ height: 200 }} className="mb-3">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={insights.seasonal.series} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="fcSeasonFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={BRAND.gold} stopOpacity={0.45} />
-                        <stop offset="95%" stopColor={BRAND.gold} stopOpacity={0.04} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" vertical={false} />
-                    <ReferenceArea x1={1} x2={6} fill="rgba(21,101,200,0.09)" />
-                    <ReferenceArea x1={7} x2={12} fill="rgba(240,154,40,0.14)" />
-                    <XAxis
-                      type="number"
-                      dataKey="month"
-                      domain={[1, 12]}
-                      ticks={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]}
-                      tickFormatter={(m) => MONTH_SHORT[m - 1] || m}
-                      tick={{ fontSize: 11 }}
-                      interval={0}
-                      tickLine={false}
-                    />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${Math.round(v).toLocaleString()}`} width={44} />
-                    <Tooltip content={<SeasonTooltip />} />
-                    <Area type="monotone" dataKey="value" stroke={BRAND.gold} strokeWidth={2} fill="url(#fcSeasonFill)" dot={{ r: 3 }} isAnimationActive />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="fc-season-legend">
-                <span className="fc-season-key fc-season-key-dry" /> <span className="fc-season-label">Dry ({'\u2013'}Jun)</span>
-                <span className="fc-season-key fc-season-key-wet" /> <span className="fc-season-label">Rainy (Jul{'\u2013'}Dec)</span>
-              </div>
-              <div className="fc-insight-caption">
-                Peak month {insights.seasonal.peak} {'\u00b7'} Low month {insights.seasonal.low}
-              </div>
-            </div>
-          ) : (
-            <p className="text-muted small mb-0">No forecast data available.</p>
-          )}
-        </InsightCard>
-      </Row>
-
-      <SectionHeading
-        icon={ChartColumn}
-        title="Municipality comparison"
-        sub="Forecast vs actual change across municipalities."
-        chip="green"
-      />
-
-      <Row className="g-3 mb-2">
-        <InsightCard title="Municipality Ranking" icon={Trophy} chip="green" col={{ md: 6 }}>
-          {insights.ranking.top ? (
-            <div className="fc-ranking-pair">
-              <div className="fc-ranking-badge fc-ranking-badge-top">
-                <ArrowUpRight size={18} strokeWidth={2.5} className="fc-ranking-ico" />
-                <div className="fc-ranking-meta">
-                  <div className="fc-ranking-tag">Top performer</div>
-                  <span className="fc-ranking-name">{insights.ranking.top.municipality_name}</span>
-                  <span className="fc-ranking-val">{formatPct(insights.ranking.top.expected_change_pct)}</span>
-                </div>
-              </div>
-              {insights.ranking.bottom && insights.ranking.bottom.municipality_id !== insights.ranking.top.municipality_id ? (
-                <div className="fc-ranking-badge fc-ranking-badge-down">
-                  <ArrowDownRight size={18} strokeWidth={2.5} className="fc-ranking-ico" />
-                  <div className="fc-ranking-meta">
-                    <div className="fc-ranking-tag">Needs attention</div>
-                    <span className="fc-ranking-name">{insights.ranking.bottom.municipality_name}</span>
-                    <span className="fc-ranking-val">{formatPct(insights.ranking.bottom.expected_change_pct)}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="fc-ranking-badge fc-ranking-badge-empty">
-                  <div className="fc-ranking-meta">
-                    <span className="fc-ranking-tag">Single ranked municipality</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-muted small mb-0">No ranking data available.</p>
-          )}
-        </InsightCard>
-
-        <InsightCard title="Growth / Decline Flags" icon={Flag} chip="purple" col={{ md: 6 }}>
-          {insights.flags.declining.length === 0 && insights.flags.growing.length === 0 ? (
-            <p className="text-muted small mb-0">No early warning flags at this time.</p>
-          ) : (
-            <div className="fc-flag-chips">
-              {insights.flags.growing.map((m) => (
-                <span key={m.municipality_id} className="fc-flag-chip fc-flag-chip-up">
-                  <ArrowUpRight size={13} strokeWidth={2.5} />
-                  <span className="fc-flag-name">{m.municipality_name}</span>
-                  <b>{formatPct(m.expected_change_pct)}</b>
-                </span>
-              ))}
-              {insights.flags.declining.map((m) => (
-                <span key={m.municipality_id} className="fc-flag-chip fc-flag-chip-down">
-                  <ArrowDownRight size={13} strokeWidth={2.5} />
-                  <span className="fc-flag-name">{m.municipality_name}</span>
-                  <b>{formatPct(m.expected_change_pct)}</b>
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="fc-insight-caption">
-            Municipalities with growth &gt;15% or a declining trend.
+      {/* ============ A. Summary ============ */}
+      <section id="summary" className="fc-section">
+        <div className="fc-section-head">
+          <span className="fc-section-chip"><Boxes size={16} strokeWidth={2} /></span>
+          <div>
+            <h2 className="fc-section-title">{label('forecastTotalMt') || 'Forecast production'}</h2>
+            <p className="fc-section-sub">{headlineSentence}</p>
           </div>
-        </InsightCard>
-      </Row>
+        </div>
+        <KpiGrid columns={5} className="fc-kpi-strip">
+          <KpiCard
+            icon={ChartLine}
+            title={label('recordedMt') || 'Recorded production'}
+            value={recordedProductionMT != null ? recordedProductionMT : null}
+            unit={unit('recordedMt') || 'MT'}
+            supporting={`Sum of approved records, last 12 complete months${latestRecordMonth ? ` through ${monthLabel(latestRecordMonth)}` : ''}`}
+            info={definition('recordedMt') + ' ' + sourceLine('production_records', "status='approved', last 12 complete months")}
+            loading={kpiLoading}
+          />
+          <KpiCard
+            icon={Target}
+            title={label('forecastTotalMt') || 'Forecast production'}
+            value={forecastProductionMT != null ? forecastProductionMT : null}
+            unit={unit('forecastTotalMt') || 'MT'}
+            supporting={`Next 12 months \u00b7 run ${forecastRunDate ? new Date(forecastRunDate).toLocaleDateString() : '\u2014'}`}
+            info={definition('forecastTotalMt') + ' ' + sourceLine('forecast_runs, forecast_points', `run #${selectedRun?.id}, method: ${methodName(forecastMethod || 'none')}`)}
+            badge={{ text: directionLabel(direction), tone: directionTone(direction) }}
+            loading={kpiLoading}
+          />
+          <KpiCard
+            icon={TrendingUp}
+            title={label('changeVsRecentAvgPct') || 'Change vs recent average'}
+            value={expectedChangePct != null ? expectedChangePct : null}
+            unit={unit('changeVsRecentAvgPct') || '%'}
+            supporting={`Forecast vs recent historical average`}
+            info={definition('changeVsRecentAvgPct') + ' ' + sourceLine('forecast_runs', `run #${selectedRun?.id}`)}
+            trend={{
+              direction: direction === 'increasing' ? 'up' : direction === 'declining' ? 'down' : 'up',
+              value: expectedChangePct != null ? Math.abs(expectedChangePct) : 0,
+              label: directionLabel(direction),
+              goodWhen: 'up',
+            }}
+            loading={kpiLoading}
+          />
+          <KpiCard
+            icon={Activity}
+            title={label('trendDirection') || 'Direction'}
+            value={na()}
+            unit={null}
+            supporting={directionLabel(direction)}
+            info={definition('trendDirection')}
+            badge={{ text: directionLabel(direction), tone: directionTone(direction) }}
+            loading={kpiLoading}
+          />
+          <KpiCard
+            icon={ShieldCheck}
+            title={label('forecastConfidence') || 'Forecast confidence'}
+            value={na()}
+            unit={null}
+            supporting={forecastConfidence ? FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence : '\u2014'}
+            info={definition('forecastConfidence') + ' ' + sourceLine('forecast_runs', `run #${selectedRun?.id}`)}
+            badge={{ text: forecastConfidence ? (FORECAST_CONFIDENCE[forecastConfidence] || forecastConfidence) : '\u2014', tone: forecastConfidence === 'high' ? 'good' : forecastConfidence === 'moderate' ? 'neutral' : 'bad' }}
+            loading={kpiLoading}
+          />
+        </KpiGrid>
+      </section>
 
-      <Row className="g-3 mb-3">
-        <Col lg={7}>
-          <Card className="encoder-card fc-card h-100">
-            <Card.Header>
-              <div className="admin-card-head">
-                <span className="admin-card-head-icon admin-kpi-accent-greenbg"><ChartColumn size={16} strokeWidth={2} /></span>
-                <div>
-                  <h5 className="admin-card-head-title">Municipality Expected Change</h5>
-                  <span className="fw-normal text-muted small ms-1">Forecast change by municipality, shaded by trend.</span>
-                </div>
-              </div>
-            </Card.Header>
-            <Card.Body>
-              {muniChartData.length === 0 ? (
-                <div className="text-muted text-center py-4">No municipality forecast data available.</div>
-              ) : (
-                <div style={{ height: 340 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={muniChartData} margin={{ top: 10, right: 30, bottom: 50, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-28} textAnchor="end" interval={0} />
-                      <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${v}%`} label={{ value: 'Expected change %', angle: -90, position: 'insideLeft', style: { fontSize: 12 } }} />
-                      <Tooltip content={({ active, payload, label }) => {
-                        if (!active || !payload || payload.length === 0) return null;
-                        const d = payload[0].payload;
-                        return (
-                          <div className="fc-tooltip">
-                            <div className="fc-tooltip-label">{label}</div>
-                            <div className="fc-tooltip-row"><span>Expected change</span><b>{formatPct(d.change)}</b></div>
-                            <div className="fc-tooltip-row"><span>Trend</span><b>{trendPill(d.trend)}</b></div>
-                            <div className="fc-tooltip-row"><span>Readiness</span><b><span className="text-capitalize">{d.readiness}</span></b></div>
-                          </div>
-                        );
-                      }} />
-                      <Legend />
-                      <Bar dataKey="change" name="Expected change (%)" radius={[6, 6, 0, 0]} isAnimationActive>
-                        {muniChartData.map((entry, i) => (
-                          <Cell key={`cell-${i}`} fill={muniBarColor(entry.trend)} />
-                        ))}
-                      </Bar>
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
+      {/* ============ B. Past to future ============ */}
+      <section id="trajectory" className="fc-section">
+        <div className="fc-section-head">
+          <span className="fc-section-chip"><ChartLine size={16} strokeWidth={2} /></span>
+          <div>
+            <h2 className="fc-section-title">Production trajectory</h2>
+            <p className="fc-section-sub">Historical (blue) then forecast (orange) with expected-range band. \u201cForecast starts here\u201d marks the boundary.</p>
+          </div>
+        </div>
+
+        <ChartCard
+          icon={ChartLine}
+          title="Historical vs Forecast Production"
+          subtitle={`${selectedMuniName} \u00b7 ${chartData.length} months`}
+          height={360}
+          caption={
+            <div className="fc-trajectory-caption">
+              {hasIncompleteTail && (
+                <span className="fc-incomplete-badge" title="Recent months have fewer approved records than normal \u2014 may be under-reported.">
+                  Still being reported
+                </span>
               )}
-            </Card.Body>
-          </Card>
-        </Col>
+              {forecastStartIdx >= 0 && (
+                <span className="fc-divider-label">Forecast starts here \u2192</span>
+              )}
+            </div>
+          }
+          className="fc-trajectory-card"
+        >
+          {chartData.length === 0 ? (
+            <div className="fc-empty-state">
+              <Zap size={24} strokeWidth={2} />
+              <p>No forecast data available. <strong>Run Forecast</strong> to generate a projection.</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData} margin={{ top: 20, right: 24, bottom: 24, left: 0 }}>
+                <defs>
+                  <linearGradient id="fcBandGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={BRAND.ocean} stopOpacity={0.12} />
+                    <stop offset="100%" stopColor={BRAND.ocean} stopOpacity={0.02} />
+                  </linearGradient>
+                  <linearGradient id="fcAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={BRAND.gold} stopOpacity={0.30} />
+                    <stop offset="100%" stopColor={BRAND.gold} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--ui-chart-grid)" />
+                <XAxis
+                  dataKey="labelShort"
+                  tick={{ fontSize: 11 }}
+                  interval={Math.max(1, Math.floor(chartData.length / 8))}
+                />
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(v) => `${Math.round(v).toLocaleString()}`}
+                />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (!active || !payload || payload.length === 0) return null;
+                    const d = payload[0].payload;
+                    return (
+                      <div className="fc-tooltip">
+                        <div className="fc-tooltip-label">{d.labelShort}</div>
+                        {d.historical != null && (
+                          <div className="fc-tooltip-row">
+                            <span>Historical</span><b>{formatMT(d.historical)}</b>
+                          </div>
+                        )}
+                        {d.forecast != null && (
+                          <div className="fc-tooltip-row">
+                            <span>Forecast</span><b>{formatMT(d.forecast)}</b>
+                          </div>
+                        )}
+                        {d.lower != null && d.upper != null && (
+                          <div className="fc-tooltip-row">
+                            <span>Expected range</span><b>{formatMT(d.lower)} \u2013 {formatMT(d.upper)}</b>
+                          </div>
+                        )}
+                        <div className="fc-tooltip-source">{sourceLine('forecast_points', `period ${d.label}, is_forecast=${d.isForecast}`)}</div>
+                      </div>
+                    );
+                  }}
+                />
+                <Legend />
+                {chartData.some((d) => d.lower != null && d.upper != null) && (
+                  <>
+                    <Area type="monotone" dataKey="upper" stroke="none" fill="url(#fcBandGrad)" name="Upper bound" connectNulls />
+                    <Area type="monotone" dataKey="lower" stroke="none" fill="url(#fcBandGrad)" name="Lower bound" connectNulls />
+                  </>
+                )}
+                <Line type="monotone" dataKey="historical" stroke={BRAND.ocean} strokeWidth={3} dot={false} name="Historical" connectNulls isAnimationActive={false} />
+                <Line type="monotone" dataKey="forecast" stroke={BRAND.gold} strokeWidth={3} strokeDasharray="6 4" dot={false} name="Forecast" connectNulls isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
 
-        <Col lg={5}>
-          <Card className="encoder-card fc-card h-100">
-            <Card.Header>
-              <div className="admin-card-head">
-                <span className="admin-card-head-icon admin-kpi-accent-goldbg"><TrendingUp size={16} strokeWidth={2} /></span>
-                <h5 className="admin-card-head-title">Year-over-Year Change</h5>
-              </div>
-            </Card.Header>
-            <Card.Body>
-              {yoyRows.length === 0 ? (
-                <div className="chart-empty">
-                  <span className="chart-empty-chip">No data</span>
-                  No year-over-year change data available.
+        {forecastPoints.length > 0 && (
+          <div className="fc-annotation-row">
+            <span className="fc-annotation">
+              <TrendingUp size={12} strokeWidth={2} /> Peak forecast: {monthLabel(forecastPoints.reduce((a, b) => (b.forecast > a.forecast ? b : a)).label)} at {formatMT(Math.max(...forecastPoints.map((d) => d.forecast)))}
+            </span>
+            <span className="fc-annotation">
+              <ArrowDownRight size={12} strokeWidth={2} /> Lowest forecast: {monthLabel(forecastPoints.reduce((a, b) => (b.forecast < a.forecast ? b : a)).label)} at {formatMT(Math.min(...forecastPoints.map((d) => d.forecast)))}
+            </span>
+          </div>
+        )}
+      </section>
+
+      {/* ============ B2. Seasonal pattern ============ */}
+      <section id="seasonal" className="fc-section" style={{ marginTop: 0 }}>
+        <div className="fc-section-head">
+          <span className="fc-section-chip"><CalendarDays size={16} strokeWidth={2} /></span>
+          <div>
+            <h2 className="fc-section-title">Seasonal pattern</h2>
+            <p className="fc-section-sub">Average production per calendar month. Dry = Jan\u2013Jun, Rainy = Jul\u2013Dec.</p>
+          </div>
+        </div>
+
+        <ChartCard
+          icon={CalendarDays}
+          title="Average Production by Month"
+          subtitle="Seasonal cycle across complete years"
+          height={260}
+          caption={
+            <ChartCaption tone="info">
+              Dry months (Jan\u2013Jun) typically show higher output; rainy months (Jul\u2013Dec) lower. Current month marked.
+            </ChartCaption>
+          }
+          className="fc-seasonal-card"
+        >
+          {(() => {
+            const monthTotals = {};
+            const monthCounts = {};
+            historyPoints.forEach((d) => {
+              const m = parseInt(d.label.slice(5, 7), 10);
+              if (!monthTotals[m]) { monthTotals[m] = 0; monthCounts[m] = 0; }
+              monthTotals[m] += d.historical;
+              monthCounts[m] += 1;
+            });
+            const series = [];
+            for (let m = 1; m <= 12; m++) {
+              if (monthCounts[m] > 0) {
+                series.push({ month: m, label: MONTH_SHORT[m - 1], value: monthTotals[m] / monthCounts[m] });
+              } else {
+                series.push({ month: m, label: MONTH_SHORT[m - 1], value: null });
+              }
+            }
+            const currentMonth = new Date().getMonth() + 1;
+            return (
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={series} margin={{ top: 20, right: 20, bottom: 24, left: 0 }}>
+                  <defs>
+                    <linearGradient id="fcSeasonGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={BRAND.gold} stopOpacity={0.30} />
+                      <stop offset="100%" stopColor={BRAND.gold} stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--ui-chart-grid)" vertical={false} />
+                  <ReferenceArea x1={1} x2={6} fill="rgba(21, 101, 200, 0.08)" />
+                  <ReferenceArea x1={7} x2={12} fill="rgba(240, 154, 40, 0.10)" />
+                  <XAxis
+                    type="number"
+                    dataKey="month"
+                    domain={[1, 12]}
+                    ticks={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]}
+                    tickFormatter={(m) => MONTH_SHORT[m - 1]}
+                    tick={{ fontSize: 11 }}
+                    interval={0}
+                    tickLine={false}
+                  />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${Math.round(v).toLocaleString()}`} width={44} />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload || payload.length === 0) return null;
+                      const d = payload[0].payload;
+                      if (d.value == null) return null;
+                      return (
+                        <div className="fc-tooltip">
+                          <div className="fc-tooltip-label">{d.label}</div>
+                          <div className="fc-tooltip-row">
+                            <span>Average production</span><b>{formatMT(d.value)}</b>
+                          </div>
+                          <div className="fc-tooltip-source">{sourceLine('production_records', "status='approved', grouped by calendar month")}</div>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Area type="monotone" dataKey="value" stroke={BRAND.gold} strokeWidth={2} fill="url(#fcSeasonGrad)" dot={{ r: 4 }} connectNulls isAnimationActive={false} />
+                  {currentMonth && (
+                    <ReferenceLine
+                      x={currentMonth}
+                      stroke={STATUS.not_ready}
+                      strokeDasharray="4 3"
+                      strokeWidth={2}
+                      label={{ value: 'Current month', position: 'top', fontSize: 11, fill: STATUS.not_ready }}
+                    />
+                  )}
+                </ComposedChart>
+              </ResponsiveContainer>
+            );
+          })()}
+        </ChartCard>
+      </section>
+
+      {/* ============ C. Demand check ============ */}
+      <section id="demand" className="fc-section">
+        <div className="fc-section-head">
+          <span className="fc-section-chip"><Target size={16} strokeWidth={2} /></span>
+          <div>
+            <h2 className="fc-section-title">Can production meet demand?</h2>
+            <p className="fc-section-sub">Salt demand vs forecast production, side by side.</p>
+          </div>
+        </div>
+
+        <Row className="g-3">
+          <Col lg={6} md={12}>
+            <Card className="fc-card h-100">
+              <Card.Body className="fc-card-body">
+                <div className="fc-demand-head d-flex align-items-start justify-content-between gap-3 mb-3">
+                  <div>
+                    <div className="fc-demand-label">{label('demandMt') || 'Salt demand'}</div>
+                    <div className="fc-demand-value">
+                      {demandBenchmark != null ? formatMT(demandBenchmark) : na()}
+                    </div>
+                    <div className="fc-demand-source">{demandSource ? sourceLine('demand_benchmarks', `provincial, year ${demandSource.year} (${demandSource.sourceName})`) : '\u2014'}</div>
+                  </div>
                 </div>
-              ) : (
-                <div>
-                  <div style={{ height: 290 }}>
+                <div className="fc-progress-wrap">
+                  <div className="fc-progress-label d-flex justify-content-between mb-1">
+                    <span>% of salt demand covered</span>
+                    <span className="fc-progress-pct">{demandCoveredPct != null ? demandCoveredPct.toFixed(1) + '%' : na()}</span>
+                  </div>
+                  <div className="fc-progress-track">
+                    <div
+                      className="fc-progress-fill"
+                      style={{
+                        width: demandCoveredPct != null ? Math.max(0, Math.min(100, demandCoveredPct)) : 0,
+                        backgroundColor: demandShortfallMT != null && demandShortfallMT <= 0 ? BRAND.green : STATUS.not_ready,
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="fc-demand-verdict mt-3">
+                  {demandShortfallMT != null ? (
+                    demandShortfallMT <= 0 ? (
+                      <div className="fc-verdict-surplus">
+                        <span className="fc-verdict-icon">\u2713</span>
+                        <span className="fc-verdict-text">Surplus: {formatMT(Math.abs(demandShortfallMT))}</span>
+                      </div>
+                    ) : (
+                      <div className="fc-verdict-shortfall">
+                        <span className="fc-verdict-icon">!</span>
+                        <span className="fc-verdict-text">Demand shortfall: {formatMT(demandShortfallMT)}</span>
+                      </div>
+                    )
+                  ) : (
+                    <div className="fc-verdict-na">Not available \u2014 missing demand benchmark or forecast.</div>
+                  )}
+                </div>
+                <div className="fc-demand-assumption mt-2">
+                  <small>{demandAssumption}</small>
+                </div>
+              </Card.Body>
+            </Card>
+          </Col>
+          <Col lg={6} md={12}>
+            <Card className="fc-card h-100">
+              <Card.Body className="fc-card-body p-0">
+                <div className="fc-stacked-bar-wrap">
+                  <div className="fc-stacked-bar-label">Forecast production vs Salt demand</div>
+                  <div style={{ height: 200 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
-                        data={yoyRows}
+                        data={[
+                          { name: 'Forecast production', value: forecastProductionMT != null ? forecastProductionMT : 0, fill: BRAND.gold },
+                          { name: 'Salt demand', value: demandBenchmark != null ? demandBenchmark : 0, fill: BRAND.ocean },
+                        ]}
                         layout="vertical"
-                        margin={{ top: 5, right: 55, bottom: 5, left: 0 }}
+                        margin={{ top: 20, right: 20, bottom: 20, left: 90 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" horizontal={false} />
-                        <XAxis
-                          type="number"
-                          tick={{ fontSize: 11 }}
-                          domain={[-yoyAbsMax, yoyAbsMax]}
-                          tickFormatter={(v) => `${v > 0 ? '+' : ''}${v}%`}
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--ui-chart-grid)" horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${Math.round(v).toLocaleString()}`} />
+                        <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={90} />
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (!active || !payload || payload.length === 0) return null;
+                            const d = payload[0].payload;
+                            return (
+                              <div className="fc-tooltip">
+                                <div className="fc-tooltip-label">{d.name}</div>
+                                <div className="fc-tooltip-row">
+                                  <span>Volume</span><b>{formatMT(d.value)}</b>
+                                </div>
+                                <div className="fc-tooltip-source">{sourceLine(d.name === 'Salt demand' ? 'demand_benchmarks' : 'forecast_points', d.name === 'Salt demand' ? 'provincial benchmark' : `run #${selectedRun?.id}`)}</div>
+                              </div>
+                            );
+                          }}
                         />
-                        <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={80} />
-                        <Tooltip content={<YoyTooltip />} cursor={{ fill: 'rgba(21, 101, 200, 0.06)' }} />
-                        <ReferenceLine x={0} stroke="var(--gray-400)" strokeWidth={1} />
-                        <Bar dataKey="changePct" name="YoY change (%)" maxBarSize={22} isAnimationActive>
-                          {yoyRows.map((m, i) => (
-                            <Cell
-                              key={`yoy-${i}`}
-                              fill={m.changePct >= 0 ? BRAND.green : STATUS.not_ready}
-                              radius={m.changePct >= 0 ? [0, 6, 6, 0] : [6, 0, 0, 6]}
-                            />
+                        <Bar dataKey="value" name="Volume" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                          {[
+                            { fill: BRAND.gold },
+                            { fill: BRAND.ocean },
+                          ].map((fill, i) => (
+                            <Cell key={`stack-${i}`} fill={fill.fill} />
                           ))}
-                          <LabelList dataKey="changePct" content={<YoYBarLabel />} />
                         </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
-                  {yoyCaption(yoyRows)}
+                  <div className="fc-stacked-caption mt-2">
+                    Small stacked bar comparing forecast production against salt demand (MT).
+                  </div>
                 </div>
-              )}
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+      </section>
 
+      {/* ============ D. By municipality ============ */}
+      <section id="municipality" className="fc-section">
+        <div className="fc-section-head">
+          <span className="fc-section-chip"><List size={16} strokeWidth={2} /></span>
+          <div>
+            <h2 className="fc-section-title">By municipality</h2>
+            <p className="fc-section-sub">Expected change, needs attention, YoY, and forecast summary for all 7 municipalities.</p>
+          </div>
+        </div>
+
+        {/* D1 + D2 side by side: 8 cols + 4 cols */}
+        <Row className="g-3 mb-3">
+          <Col lg={8} md={12}>
+            <Card className="fc-card h-100">
+              <Card.Header className="fc-card-header">
+                <div className="d-flex align-items-center gap-2">
+                  <TrendingUp size={16} strokeWidth={2} />
+                  <h5 className="fc-card-title mb-0">Expected change by municipality</h5>
+                </div>
+              </Card.Header>
+              <Card.Body className="fc-card-body p-0">
+                <div style={{ height: 300 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={muniExpectedChange}
+                      layout="vertical"
+                      margin={{ top: 10, right: 20, bottom: 10, left: 90 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--ui-chart-grid)" horizontal={false} />
+                      <ReferenceLine x={0} stroke="#6c757d" strokeWidth={1} />
+                      <XAxis
+                        type="number"
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`}
+                      />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={90} />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (!active || !payload || payload.length === 0) return null;
+                          const d = payload[0].payload;
+                          return (
+                            <div className="fc-tooltip">
+                              <div className="fc-tooltip-label">{d.name}</div>
+                              <div className="fc-tooltip-row">
+                                <span>Expected change</span><b>{formatPctSigned(d.change)}</b>
+                              </div>
+                              <div className="fc-tooltip-row">
+                                <span>Direction</span><b>{directionLabel(d.trend)}</b>
+                              </div>
+                              <div className="fc-tooltip-row">
+                                <span>Readiness</span><b>{d.readiness || '\u2014'}</b>
+                              </div>
+                              <div className="fc-tooltip-source">{sourceLine('forecast_runs', `municipality ${d.name}, latest run`)}</div>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Bar dataKey="change" name="Expected change (%)" maxBarSize={24} isAnimationActive={false}>
+                        {muniExpectedChange.map((entry, i) => (
+                          <Cell
+                            key={`muni-${i}`}
+                            fill={entry.trend === 'increasing' ? BRAND.green : entry.trend === 'declining' ? STATUS.not_ready : '#adb5bd'}
+                            radius={[0, 6, 6, 0]}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="fc-muni-legend mt-2">
+                  <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: BRAND.green }} /> Increasing (&gt;+2%)</span>
+                  <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: STATUS.not_ready }} /> Declining (&lt;-2%)</span>
+                  <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: '#adb5bd' }} /> Stable (within \u00b12%)</span>
+                  {muniNoForecast.length > 0 && (
+                    <span className="fc-legend-item fc-legend-no-data">
+                      <span className="fc-legend-dot" style={{ backgroundColor: '#e2e8f0', border: '1px dashed #adb5bd' }} /> Not enough data: {muniNoForecast.join(', ')}
+                    </span>
+                  )}
+                </div>
+                {muniNoForecast.length > 0 && (
+                  <div className="fc-not-enough-data mt-2">
+                    <p className="fc-not-enough-text">
+                      {muniNoForecast.join(', ')} <strong>Not enough data</strong> \u2014 no forecast generated (fewer than 6 observed months). Run a forecast for this municipality first.
+                    </p>
+                  </div>
+                )}
+              </Card.Body>
+            </Card>
+          </Col>
+
+          <Col lg={4} md={12}>
+            <Card className="fc-card h-100">
+              <Card.Header className="fc-card-header">
+                <div className="d-flex align-items-center gap-2">
+                  <Flag size={16} strokeWidth={2} />
+                  <h5 className="fc-card-title mb-0">Needs attention</h5>
+                </div>
+              </Card.Header>
+              <Card.Body className="fc-card-body p-0">
+                {needsAttention.length === 0 ? (
+                  <div className="fc-empty-state">
+                    <p>No municipalities need attention at this time.</p>
+                  </div>
+                ) : (
+                  <div className="fc-needs-attention-list">
+                    {needsAttention.map((m) => (
+                      <div key={m.id} className="fc-attention-item">
+                        <div className="fc-attention-name">
+                          <span className="fc-attention-dot" style={{ backgroundColor: m.trend === 'declining' ? STATUS.not_ready : m.reliability === 'low' ? '#f59e0b' : '#adb5bd' }} />
+                          <span className="fc-attention-title">{m.name}</span>
+                          <span className="fc-attention-change">{m.change != null ? formatPctSigned(m.change) : '\u2014'}</span>
+                        </div>
+                        <div className="fc-attention-reasons">
+                          {m.reasons.map((r, i) => (
+                            <span key={i} className="fc-attention-reason">{r}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+
+        {/* D3. Year-over-year change */}
+        <div className="row g-3 mb-3">
+          <Col lg={12}>
+            <Card className="fc-card h-100">
+              <Card.Header className="fc-card-header">
+                <div className="d-flex align-items-center gap-2">
+                  <Clock size={16} strokeWidth={2} />
+                  <h5 className="fc-card-title mb-0">Year-over-year change</h5>
+                </div>
+              </Card.Header>
+              <Card.Body className="fc-card-body p-0">
+                <div style={{ height: 260 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={yoyRows}
+                      layout="vertical"
+                      margin={{ top: 10, right: 20, bottom: 10, left: 90 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--ui-chart-grid)" horizontal={false} />
+                      <ReferenceLine x={0} stroke="#6c757d" strokeWidth={1} />
+                      <XAxis
+                        type="number"
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`}
+                      />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={90} />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (!active || !payload || payload.length === 0) return null;
+                          const d = payload[0].payload;
+                          if (!d.hasData) {
+                            return (
+                              <div className="fc-tooltip">
+                                <div className="fc-tooltip-label">{d.name}</div>
+                                <div className="fc-tooltip-row">
+                                  <span>Status</span><b>Incomplete data</b>
+                                </div>
+                                <div className="fc-tooltip-source">{sourceLine('production_records', "status='approved', last 12 vs previous 12 months")}</div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="fc-tooltip">
+                              <div className="fc-tooltip-label">{d.name}</div>
+                              <div className="fc-tooltip-row">
+                                <span>Last 12 months</span><b>{formatMT(d.current)}</b>
+                              </div>
+                              <div className="fc-tooltip-row">
+                                <span>Previous 12 months</span><b>{formatMT(d.previous)}</b>
+                              </div>
+                              <div className="fc-tooltip-row">
+                                <span>YoY change</span><b>{formatPctSigned(d.changePct)}</b>
+                              </div>
+                              <div className="fc-tooltip-source">{sourceLine('production_records', "status='approved', last 12 complete vs previous 12 complete months")}</div>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Bar dataKey="changePct" name="YoY change (%)" maxBarSize={22} isAnimationActive={false}>
+                        {yoyRows.map((m, i) => (
+                          <Cell
+                            key={`yoy-${i}`}
+                            fill={!m.hasData ? '#adb5bd' : m.changePct >= 0 ? BRAND.green : STATUS.not_ready}
+                            radius={[0, 6, 6, 0]}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="fc-yoy-legend mt-2">
+                  <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: BRAND.green }} /> Increase</span>
+                  <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: STATUS.not_ready }} /> Decrease</span>
+                  <span className="fc-legend-item"><span className="fc-legend-dot" style={{ backgroundColor: '#adb5bd' }} /> Incomplete data</span>
+                </div>
+                {yoyRows.filter((m) => !m.hasData).length > 0 && (
+                  <div className="fc-yoy-incomplete mt-2">
+                    <p className="fc-yoy-incomplete-text">
+                      {yoyRows.filter((m) => !m.hasData).map((m) => m.name).join(', ')} \u2014 <strong>Incomplete data</strong> (not enough complete months for a valid YoY comparison).
+                    </p>
+                  </div>
+                )}
+              </Card.Body>
+            </Card>
+          </Col>
+        </div>
+
+        {/* D4. Municipality forecast summary table */}
+        <div className="row g-3">
+          <Col lg={12}>
+            <Card className="fc-card h-100">
+              <Card.Header className="fc-card-header">
+                <div className="d-flex align-items-center gap-2">
+                  <TableIcon size={16} strokeWidth={2} />
+                  <h5 className="fc-card-title mb-0">Municipality forecast summary</h5>
+                </div>
+              </Card.Header>
+              <Card.Body className="fc-card-body p-0">
+                <div className="fc-table-wrap">
+                  <table className="fc-summary-table">
+                    <thead>
+                      <tr>
+                        <th>Municipality</th>
+                        <th>Forecast production</th>
+                        <th>Change vs recent average</th>
+                        <th>Direction</th>
+                        <th>Forecast confidence</th>
+                        <th>Data sufficiency</th>
+                        <th>Last run</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {muniSummaryTable.length === 0 ? (
+                        <tr>
+                          <td colSpan="7" className="fc-table-empty">No municipality forecast data available.</td>
+                        </tr>
+                      ) : (
+                        muniSummaryTable.map((m) => (
+                          <tr key={m.id}>
+                            <td className="fc-table-name">{m.name}</td>
+                            <td className="fc-table-numeric">
+                              {m.forecastMT != null ? formatMT(m.forecastMT) : na()}
+                            </td>
+                            <td className="fc-table-numeric">
+                              {m.changePct != null ? formatPctSigned(m.changePct) : na()}
+                            </td>
+                            <td className="fc-table-badge">
+                              <span className={`fc-badge fc-badge--${directionTone(m.direction)}`}>{directionLabel(m.direction)}</span>
+                            </td>
+                            <td className="fc-table-badge">
+                              <span className={`fc-badge fc-badge--${m.confidence === 'high' ? 'good' : m.confidence === 'moderate' ? 'neutral' : 'bad'}`}>{FORECAST_CONFIDENCE[m.confidence] || m.confidence}</span>
+                            </td>
+                            <td className="fc-table-badge">
+                              <span className={`fc-badge fc-badge--${m.sufficiency === 'sufficient' ? 'good' : m.sufficiency === 'limited' ? 'neutral' : 'bad'}`}>{DATA_SUFFICIENCY[m.sufficiency] || m.sufficiency}</span>
+                            </td>
+                            <td className="fc-table-numeric">{m.lastRun}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <ChartCaption tone="info">
+                  Forecast production, change vs recent average, direction, confidence, and data sufficiency per municipality.
+                  {muniNoForecast.length > 0 && ` Municipalities without a forecast (${muniNoForecast.join(', ')}) show \u201cNot available\u201d.`}
+                  <br />
+                  {sourceLine('forecast_runs, forecast_points', 'per municipality, latest run')}
+                </ChartCaption>
+              </Card.Body>
+            </Card>
+          </Col>
+        </div>
+      </section>
+
+      {/* ============ E. Footer: How this forecast was made ============ */}
+      <section id="method" className="fc-section fc-method-section">
+        <div className="fc-section-head">
+          <span className="fc-section-chip"><Info size={16} strokeWidth={2} /></span>
+          <div>
+            <h2 className="fc-section-title">How this forecast was made</h2>
+            <p className="fc-section-sub">Forecast method, accuracy check, model comparison \u2014 plain-English names first.</p>
+          </div>
+        </div>
+
+        <div className="row g-3">
+          <Col lg={4} md={6}>
+            <Card className="fc-card h-100">
+              <Card.Body className="fc-card-body">
+                <div className="fc-method-item">
+                  <div className="fc-method-label">Forecast method</div>
+                  <div className="fc-method-value">
+                    {selectedRun ? methodName(selectedRun.algorithm || 'none') : na()}
+                  </div>
+                  <div className="fc-method-source">{sourceLine('forecast_runs', `run #${selectedRun?.id}`)}</div>
+                </div>
+                <div className="fc-method-item mt-3">
+                  <div className="fc-method-label">Data sufficiency</div>
+                  <div className="fc-method-value">
+                    {selectedRun ? (DATA_SUFFICIENCY[selectedRun.readiness] || selectedRun.readiness || na()) : na()}
+                  </div>
+                  <div className="fc-method-source">{definition('dataSufficiency')}</div>
+                </div>
+              </Card.Body>
+            </Card>
+          </Col>
+          <Col lg={4} md={6}>
+            <Card className="fc-card h-100">
+              <Card.Body className="fc-card-body">
+                <div className="fc-method-item">
+                  <div className="fc-method-label">Forecast confidence</div>
+                  <div className="fc-method-value">
+                    {selectedRun ? (FORECAST_CONFIDENCE[selectedRun.reliability] || selectedRun.reliability || na()) : na()}
+                  </div>
+                  <div className="fc-method-source">{definition('forecastConfidence')}</div>
+                </div>
+                <div className="fc-method-item mt-3">
+                  <div className="fc-method-label">Expected range</div>
+                  <div className="fc-method-value">
+                    {selectedRun && forecastPoints.length > 0
+                      ? `${formatMT(Math.min(...forecastPoints.map((d) => d.lower || 0)))} \u2013 ${formatMT(Math.max(...forecastPoints.map((d) => d.upper || 0)))}`
+                      : na()}
+                  </div>
+                  <div className="fc-method-source">90% expected range from forecast_points.lower_bound / upper_bound</div>
+                </div>
+              </Card.Body>
+            </Card>
+          </Col>
+          <Col lg={4} md={6}>
+            <Card className="fc-card h-100">
+              <Card.Body className="fc-card-body">
+                <div className="fc-method-item">
+                  <div className="fc-method-label">Model comparison</div>
+                  <div className="fc-method-value">
+                    {selectedRun && selectedRun.candidate_metrics
+                      ? Object.entries(selectedRun.candidate_metrics).length + ' models compared'
+                      : na()}
+                  </div>
+                  <div className="fc-method-source">Holdout comparison of actual vs predicted (MAE/RMSE/MAPE)</div>
+                </div>
+                <div className="fc-method-item mt-3">
+                  <div className="fc-method-label">Accuracy check</div>
+                  <div className="fc-method-value">
+                    {selectedRun && selectedRun.mae != null
+                      ? `MAE ${formatMT(selectedRun.mae)}`
+                      : na()}
+                  </div>
+                  <div className="fc-method-source">{definition('maeMt')}</div>
+                </div>
+              </Card.Body>
+            </Card>
+          </Col>
+        </div>
+
+        <div className="fc-method-collapse mt-4">
+          <button
+            type="button"
+            className="fc-collapse-toggle"
+            onClick={() => setActiveSection('method')}
+            aria-expanded="true"
+          >
+            <span>Collapse \u201cHow this forecast was made\u201d</span>
+          </button>
+        </div>
+      </section>
+
+      {/* ============ Forecast modal (unchanged feature) ============ */}
       <Modal show={showForecastModal} onHide={() => setShowForecastModal(false)} centered backdrop="static">
         <Modal.Header closeButton>
           <Modal.Title>Run Forecast</Modal.Title>
@@ -921,29 +1251,39 @@ export default function ForecastDashboard() {
         <Modal.Body>
           <Form>
             <Form.Group className="mb-3">
-              <Form.Label>Municipality</Form.Label>
-              <Form.Select value={selectedMuni} onChange={(e) => setSelectedMuni(e.target.value)} disabled>
-                <option value="all">All Municipalities</option>
+              <Form.Label>Municipality scope</Form.Label>
+              <Form.Select
+                value={selectedMuni}
+                onChange={(e) => setSelectedMuni(e.target.value)}
+                disabled={running}
+              >
+                <option value="all">{SCOPE_ALL_LABEL}</option>
                 {municipalities.map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </Form.Select>
-              <Form.Text className="text-muted">Uses the current municipality filter.</Form.Text>
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>Forecast Horizon (months)</Form.Label>
-              <Form.Control type="number" min="1" max="36" value={forecastHorizon} onChange={(e) => setForecastHorizon(Number(e.target.value))} />
+              <Form.Label>Forecast horizon (months)</Form.Label>
+              <Form.Control
+                type="number"
+                min="1"
+                max="36"
+                value={forecastHorizon}
+                onChange={(e) => setForecastHorizon(Math.max(1, Math.min(36, Number(e.target.value || 12))))}
+                disabled={running}
+              />
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>Notes / Context (optional)</Form.Label>
-              <Form.Control as="textarea" rows={3} value={forecastNotes} onChange={(e) => setForecastNotes(e.target.value)} placeholder="Any context for this forecast run..." />
+              <Form.Label>Notes / context (optional)</Form.Label>
+              <Form.Control as="textarea" rows={3} value={forecastNotes} onChange={(e) => setForecastNotes(e.target.value)} placeholder="Any context for this forecast run..." disabled={running} />
             </Form.Group>
           </Form>
         </Modal.Body>
         <Modal.Footer>
           <Button variant="secondary" onClick={() => setShowForecastModal(false)} disabled={running}>Cancel</Button>
           <Button variant="primary" onClick={submitForecast} disabled={running}>
-            {running ? 'Running…' : 'Run Forecast'}
+            {running ? 'Running\u2026' : 'Run Forecast'}
           </Button>
         </Modal.Footer>
       </Modal>
@@ -951,8 +1291,10 @@ export default function ForecastDashboard() {
   );
 }
 
-function trendIconLarge(direction) {
-  if (direction === 'increasing') return <><span style={{ color: BRAND.green }}>{'\u2191'}</span> Increasing</>;
-  if (direction === 'declining') return <><span style={{ color: STATUS.not_ready }}>{'\u2193'}</span> Declining</>;
-  return <>{'\u2192'} Stable</>;
+export default function ForecastDashboard() {
+  return (
+    <ErrorBoundary>
+      <InnerForecastDashboard />
+    </ErrorBoundary>
+  );
 }

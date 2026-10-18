@@ -15,6 +15,7 @@ from app.extensions import db
 from datetime import datetime, date, timedelta
 from sqlalchemy import func
 from app.services.forecast_service import _monthly_aggregates
+from app.services.aggregates import _reporting_grid
 from app.constants import AGE_BUCKET_FIELDS, QUALITY_FIELDS, QUALITY_WEIGHTS, SECTOR_DEMAND, SECTOR_DEMAND_NOTE
 from app.utils import _admin_only, _parse_date
 
@@ -682,15 +683,28 @@ def stats():
 @admin_api_bp.route("/data-quality", methods=["GET"])
 @login_required
 def data_quality():
-    # WHAT: Compute per-municipality data-completeness scores.
-    # WHY: Tinutukoy kung gaano kumpleto ang records ng bawat bayan bago i-approved.
+    # WHAT: Compute per-municipality data-completeness scores plus reporting
+    #       completeness grid (which months each municipality reported).
+    # WHY: Tinutukoy kung gaano kumpleto ang records ng bawat bayan bago
+    #      i-approved, at kung may mga buwan na naka-gap sa pag-report.
     if _admin_only():
         return jsonify({"error": "Admin access only."}), 403
 
+    range_months = int(request.args.get("range") or 36)
+    if range_months not in (12, 24, 36):
+        range_months = 36
+
     records = ProductionRecord.query.all()
     total_records = len(records)
-    by_muni = {}
 
+    # Records awaiting validation (pending, rejected, returned) — admin must act.
+    pending_count = (
+        ProductionRecord.query
+        .filter(ProductionRecord.status.in_(("pending", "rejected", "returned")))
+        .count()
+    )
+
+    by_muni = {}
     for r in records:
         muni_id = r.municipality_id
         muni_name = r.municipality.name if r.municipality else "Unknown"
@@ -742,12 +756,38 @@ def data_quality():
 
     municipality_scores.sort(key=lambda x: x["quality_score"])
 
+    # Reporting completeness grid (shared helper with analytics/descriptive).
+    muni_ids = [m["municipality_id"] for m in municipality_scores]
+    muni_names = {m["municipality_id"]: m["municipality_name"] for m in municipality_scores}
+    grid_labels, reporting_grid = _reporting_grid(muni_ids, muni_names, range_months)
+
+    # Reporting completeness % across all municipalities and months in range.
+    total_cells = len(grid_labels) * len(reporting_grid)
+    reported_cells = sum(
+        1 for row in reporting_grid for mo in row["months"] if mo["reported"]
+    )
+    reporting_completeness_pct = round((reported_cells / total_cells) * 100, 1) if total_cells else 0.0
+
+    # Municipalities with missing months in the last 3 months.
+    recent_labels = grid_labels[-3:]
+    municipalities_missing_recent = [
+        row["municipality_name"]
+        for row in reporting_grid
+        if any(not mo["reported"] for mo in row["months"] if mo["month_label"] in recent_labels)
+    ]
+
     return jsonify({
         "overall_quality_score": overall_score,
         "overall_completeness": overall_completeness,
         "weights": QUALITY_WEIGHTS,
         "municipalities": municipality_scores,
         "total_records": total_records,
+        "pending_validation_count": pending_count,
+        "reporting_grid": reporting_grid,
+        "grid_labels": grid_labels,
+        "range_months": range_months,
+        "reporting_completeness_pct": reporting_completeness_pct,
+        "municipalities_missing_recent": municipalities_missing_recent,
     })
 
 

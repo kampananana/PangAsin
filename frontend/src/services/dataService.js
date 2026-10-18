@@ -219,8 +219,9 @@ export function getAdminStats() {
   return api('/admin/stats');
 }
 
-export function getDataQuality() {
-  return api('/admin/data-quality');
+export function getDataQuality(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return api(`/admin/data-quality${qs ? `?${qs}` : ''}`);
 }
 
 export function getAdminSupplyDemand() {

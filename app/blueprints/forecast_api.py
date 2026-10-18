@@ -2,14 +2,37 @@
 # WHY: Naka-separate para malinaw kung saan ginagawa ang pagsusuri ng forecast.
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
-from datetime import datetime, date
 from app.extensions import db
 from app.models.forecast import ForecastRun, ForecastPoint
 from app.models.municipality import Municipality
-from app.services.forecast_service import run_forecast, get_municipality_outlook, evaluate_target
+from app.services.forecast_service import (
+    run_forecast,
+    run_forecast_all_municipalities,
+    get_municipality_outlook,
+    evaluate_target,
+)
 from app.utils import _admin_only, _parse_date
 
 forecast_api_bp = Blueprint("forecast_api", __name__, url_prefix="/api/admin/forecast")
+
+
+def _model_comparison(candidate_metrics, chosen_algorithm):
+    """Build a short model_comparison list from candidate_metrics."""
+    if not candidate_metrics:
+        return None
+    comparison = []
+    for algo, m in candidate_metrics.items():
+        if not isinstance(m, dict):
+            continue
+        comparison.append({
+            "algorithm": algo,
+            "rmse": m.get("rmse"),
+            "mae": m.get("mae"),
+            "mape": m.get("mape"),
+            "chosen": algo == chosen_algorithm,
+        })
+    comparison.sort(key=lambda x: x["rmse"] if x["rmse"] is not None else float("inf"))
+    return comparison
 
 
 def _serialize_run(run):
@@ -30,6 +53,8 @@ def _serialize_run(run):
         "mape": float(run.mape) if run.mape is not None else None,
         "r2": float(run.r2) if run.r2 is not None else None,
         "candidate_metrics": run.candidate_metrics,
+        "model_comparison": _model_comparison(run.candidate_metrics, run.algorithm),
+        "backtest": run.backtest if hasattr(run, "backtest") else None,
         "incomplete_tail": bool(run.incomplete_tail),
         "note": run.note,
         "created_at": run.created_at.isoformat() + "Z" if run.created_at else None,
@@ -59,23 +84,24 @@ def run():
     else:
         municipality_id = None
 
-    period_start = _parse_date(body.get("period_start"))
-    period_end = _parse_date(body.get("period_end"))
     forecast_horizon = int(body.get("forecast_horizon") or 12)
+    if forecast_horizon < 1 or forecast_horizon > 36:
+        return jsonify({"error": "forecast_horizon must be between 1 and 36."}), 400
 
-    if period_end and period_start and period_end <= period_start:
-        return jsonify({"error": "period_end must be after period_start."}), 400
+    # Validate municipality_id exists when a specific scope is requested.
+    if municipality_id is not None and not Municipality.query.get(municipality_id):
+        return jsonify({"error": "municipality_id is invalid."}), 400
 
-    horizon_months = forecast_horizon
-    if period_end:
-        ref = period_end
+    # WHAT: The history window and forecast horizon are now auto-set: history is
+    #      the last 3 years up to the last month with data; the forecast runs
+    #      `forecast_horizon` months ahead from that last month. The client no
+    #      longer sends period_start / period_end.
+    #      municipality_id=None means "all municipalities" (province total =
+    #      sum of municipality forecasts).
+    if municipality_id is None:
+        run_obj = run_forecast_all_municipalities(forecast_horizon)
     else:
-        ref = datetime.utcnow().date()
-    y = ref.year + (ref.month + horizon_months - 1) // 12
-    m = (ref.month + horizon_months - 1) % 12 + 1
-    forecast_end = date(y, m, 1)
-
-    run_obj = run_forecast(municipality_id, period_start or date(2020, 1, 1), period_end or ref, forecast_horizon)
+        run_obj = run_forecast(municipality_id, forecast_horizon)
     return jsonify({"run": _serialize_run(run_obj)}), 201
 
 
@@ -137,12 +163,17 @@ def evaluate_target_route():
     if split_method not in ("equal", "seasonal"):
         return jsonify({"error": "split_method must be 'equal' or 'seasonal'."}), 400
 
+    target_basis = body.get("target_basis") or "annual"
+    if target_basis not in ("annual", "period"):
+        return jsonify({"error": "target_basis must be 'annual' or 'period'."}), 400
+
     try:
         result = evaluate_target(
             municipality_id,
             float(annual_target),
             forecast_horizon,
             split_method=split_method,
+            target_basis=target_basis,
         )
     except Exception as e:
         return jsonify({"error": str(e)}), 500

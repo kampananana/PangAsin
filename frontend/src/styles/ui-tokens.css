@@ -52,6 +52,40 @@
   --ui-t-fast: 150ms ease;
   --ui-t-slow: 200ms ease;
 
+  /* Spacing scale (8px grid) */
+  --ui-space-4: 4px;
+  --ui-space-8: 8px;
+  --ui-space-12: 12px;
+  --ui-space-16: 16px;
+  --ui-space-24: 24px;
+  --ui-space-32: 32px;
+  --ui-space-48: 48px;
+
+  /* Font sizes */
+  --ui-fs-caption: 11px;
+  --ui-fs-small: 12px;
+  --ui-fs-base: 14px;
+  --ui-fs-lg: 16px;
+  --ui-fs-xl: 20px;
+  --ui-fs-2xl: 24px;
+  --ui-fs-3xl: 32px;
+
+  /* Chart palette (one color = one meaning on every page) */
+  --ui-chart-ocean: #1565C8;
+  --ui-chart-gold: #F09A28;
+  --ui-chart-green: #29B039;
+  --ui-chart-brown: #574326;
+  --ui-chart-danger: #DC2626;
+  --ui-chart-grid: #E9ECEF;
+  --ui-chart-axis: #ADB5BD;
+
+  /* Status tones (green = approved/good, amber = pending/limited, red = rejected/declining/danger, blue = info/draft) */
+  --ui-status-good: #29B039;
+  --ui-status-warning: #F09A28;
+  --ui-status-danger: #DC2626;
+  --ui-status-info: #1565C8;
+  --ui-status-neutral: #6C757D;
+
   /* Shell geometry (consumed by the sidebar + content so parehas ang alignment) */
   /* WHAT: 264/72 na may 16px shell gap.
      WHY: isang token para sa sidebar margin, dock width, at content padding
@@ -59,4 +93,138 @@
   --ui-sidebar-expanded: 264px;
   --ui-sidebar-collapsed: 72px;
   --ui-shell-gap: 16px;
+
+  /* Reporting completeness grid tokens */
+  --rg-cell-size: 20px;
+  --rg-cell-gap: 4px;
+  --rg-muni-col-width: 150px;
+  --rg-summary-col-width: 70px;
+}
+
+/* ===== Reporting completeness grid ===== */
+.reporting-grid-wrapper {
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 0 -1rem;
+  padding: 0 1rem;
+}
+
+@media (min-width: 768px) {
+  .reporting-grid-wrapper {
+    overflow-x: visible;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+.reporting-grid {
+  display: grid;
+  grid-template-columns:
+    var(--rg-muni-col-width)
+    repeat(var(--rg-cols, 36), var(--rg-cell-size))
+    repeat(3, var(--rg-summary-col-width));
+  grid-auto-rows: var(--rg-cell-size);
+  gap: var(--rg-cell-gap);
+  min-width: max-content;
+}
+
+.rg-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  line-height: 1;
+}
+
+.rg-corner {
+  background: var(--ui-surface);
+  border: none;
+}
+
+.rg-header {
+  background: var(--ui-surface);
+  color: var(--ui-text-muted);
+  font-weight: 700;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.rg-year-header {
+  background: #F1F3F5;
+  color: var(--ui-text-2);
+  font-weight: 700;
+  font-size: 11px;
+  border-bottom: 2px solid var(--ui-text-2);
+}
+
+.rg-month-header {
+  background: #F8F9FA;
+  color: var(--ui-text-muted);
+  font-weight: 700;
+  font-size: 10px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.rg-muni-row {
+  contain: content;
+}
+
+.rg-muni-name {
+  position: sticky;
+  left: 0;
+  background: var(--ui-surface);
+  z-index: 2;
+  font-weight: 600;
+  color: var(--ui-text);
+  justify-content: flex-start;
+  padding-left: 8px;
+  border-right: 1px solid var(--ui-border);
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.rg-month-cell {
+  font-size: 9px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--ui-border);
+  cursor: default;
+}
+
+.rg-month-cell.rg-reported {
+  background: #D1FAE5;
+  color: #065F46;
+  border-color: #10B981;
+}
+
+.rg-month-cell.rg-missing {
+  background: #F3F4F6;
+  color: #D1D5DB;
+}
+
+.rg-month-cell.rg-current-incomplete {
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #F59E0B;
+}
+
+.rg-summary {
+  background: var(--ui-surface);
+  border-bottom: 1px solid var(--ui-border);
+  font-size: 10px;
+  color: var(--ui-text-2);
+}
+
+.rg-summary-value {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ui-text);
+  line-height: 1.2;
+}
+
+.rg-summary-label {
+  font-size: 9px;
+  color: var(--ui-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
 }

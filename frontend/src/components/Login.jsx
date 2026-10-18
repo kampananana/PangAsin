@@ -9,22 +9,14 @@ import { Alert, Button, Col, Container, Form, Row } from 'react-bootstrap';
 import { AlertCircle, ArrowLeft, ArrowRight, CalendarDays, Eye, EyeOff, Loader2, Lock, Mail, MapPin, Phone, Scale, ShieldCheck } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import Reveal from './Reveal';
+import { SkeletonBlock } from './Skeleton';
 import { loadPublicDashboardData, loginAPI } from '../services/dataService';
-import { formatMT } from '../utils/volumeFormat';
+import { formatMTWithUnit } from '../utils/volumeFormat';
 import { useToast } from './Toast';
 import AdminKpiCard from './admin/AdminKpiCard';
 import useCountUp from '../hooks/useCountUp';
 
 const POLICY_MANDATE = 'RA 11985';
-
-// Fallback na numero (placeholder lamang — may random na halaga). */
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function randomFloat(min, max) {
-  return Math.random() * (max - min) + min;
-}
 
 function formatProductionYears(records) {
   const years = [...new Set(
@@ -93,23 +85,19 @@ export default function Login({ onLogin }) {
     };
   }, []);
 
+  const isLoading = kpiData === null && !kpiError;
+
   /* WHAT: Numero ang kalkulahin mula sa totoong dashboard data.
-     WHY: Kapag may totoong data, mula ito; kapag walang data (fallback lamang),
-          random na numero ang ipapakita para hindi mabigyan ng "Data unavailable"
-          ang UI habang hinihintay. */
+     WHY: Kapag may totoong data, mula ito; kapag walang data o nag-error,
+          hindi inuubos ang random na numero para maiwasan ang makabubulong
+          na data sa UI. */
   const dashboardNumbers = useMemo(() => {
-    if (kpiError) {
+    if (kpiError || !kpiData) {
       return {
-        municipalityCount: randomInt(0, 40),
-        yearCount: randomInt(0, 12),
-        totalMT: randomFloat(0, 400000),
-      };
-    }
-    if (!kpiData) {
-      return {
-        municipalityCount: randomInt(0, 40),
-        yearCount: randomInt(0, 12),
-        totalMT: randomFloat(0, 400000),
+        municipalityCount: null,
+        yearRange: null,
+        totalMT: null,
+        dataAvailable: false,
       };
     }
 
@@ -121,34 +109,45 @@ export default function Login({ onLogin }) {
       ? Number(production.provinceTotalMT)
       : null;
 
+    let yearRange = null;
+    if (years.length > 0) {
+      const start = years[0].includes('–') ? years[0].split('–')[0] : years[0];
+      const end = years[years.length - 1].includes('–')
+        ? years[years.length - 1].split('–')[1]
+        : years[years.length - 1];
+      yearRange = start === end ? start : `${start}–${end}`;
+    }
+
     return {
       municipalityCount: municipalities.length,
-      yearCount: years.length,
+      yearRange,
       totalMT,
+      dataAvailable: true,
     };
   }, [kpiData, kpiError]);
 
   const municipalityCount = useCountUp(dashboardNumbers.municipalityCount, { containerRef: statsRef });
-  const yearCount = useCountUp(dashboardNumbers.yearCount, { containerRef: statsRef });
+  const displayedYearRange = useCountUp(dashboardNumbers.yearRange, { containerRef: statsRef });
   const animatedTotal = useCountUp(dashboardNumbers.totalMT, { containerRef: statsRef });
 
   const kpis = useMemo(() => {
+    const notAvailable = !dashboardNumbers.dataAvailable;
+
     return {
       municipalities: {
-        value: String(municipalityCount),
+        value: notAvailable ? 'Data unavailable' : String(municipalityCount),
         supporting: 'Municipalities with approved production records',
       },
       years: {
-        value: String(yearCount),
+        value: notAvailable ? 'Data unavailable' : displayedYearRange,
         supporting: 'Distinct years with approved monthly production records',
       },
       production: {
-        value: formatMT(animatedTotal),
-        unit: 'MT',
+        value: notAvailable ? 'Data unavailable' : formatMTWithUnit(animatedTotal),
         supporting: 'Approved production recorded in the public dashboard',
       },
     };
-  }, [municipalityCount, yearCount, animatedTotal]);
+  }, [municipalityCount, displayedYearRange, animatedTotal, dashboardNumbers.dataAvailable]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -214,12 +213,6 @@ export default function Login({ onLogin }) {
 
         <div className="login-form-region">
           <div className="login-form-card">
-            <img
-              src="/static/brand/PangAsin_Logo.png"
-              alt=""
-              className="login-form-logo"
-              aria-hidden="true"
-            />
             <div className="encoder-login-eyebrow">Secure sign in</div>
             <h2 className="encoder-login-title">Welcome back</h2>
             <p className="encoder-login-sub">
@@ -244,7 +237,7 @@ export default function Login({ onLogin }) {
                 </Form.Label>
                 <div className="encoder-login-input-wrap">
                   <Mail
-                    size={16}
+                    size={18}
                     aria-hidden="true"
                     className="encoder-login-input-icon"
                   />
@@ -265,7 +258,7 @@ export default function Login({ onLogin }) {
                   Password
                 </Form.Label>
                 <div className="encoder-login-input-wrap">
-                  <Lock size={16} aria-hidden="true" className="encoder-login-input-icon" />
+                  <Lock size={18} aria-hidden="true" className="encoder-login-input-icon" />
                   <Form.Control
                     id="loginPassword"
                     type={showPassword ? 'text' : 'password'}
@@ -399,61 +392,64 @@ export default function Login({ onLogin }) {
         or addresses.
       */}
       <footer className="login-footer">
-        <div className="login-footer-wave" aria-hidden="true">
-          <svg viewBox="0 0 120 24" preserveAspectRatio="none" focusable="false">
-            <path d="M0 24 C 30 0, 60 24, 90 12 C 105 6, 112 12, 120 12 L 120 24 Z" />
-          </svg>
-        </div>
         <Container>
           <div className="login-footer-grid">
-            <div className="login-footer-block">
-              <div className="login-footer-eyebrow" id="login-footer-contact">
-                Contact
+            <div className="login-footer-brand">
+              <div className="login-footer-brand-row" aria-hidden="true">
+                <img
+                  src="/static/brand/PangAsin_Logo.png"
+                  alt=""
+                  className="login-footer-brand-logo"
+                />
+                <span className="login-footer-brand-name">PangAsin</span>
               </div>
-              <p className="login-footer-org">
-                Accelerating Salt Research and Innovation (ASIN) Center,
-                Pangasinan State University
+              <p className="login-footer-brand-desc">
+                Salt production monitoring, forecasting, and decision support.
               </p>
-              <p className="login-footer-support">
-                Supported by the DOST NICER Program.
+              <p className="login-footer-brand-support">
+                Supported by the DOST NICER Program
               </p>
-              {/* TODO(user) — replace with the official ASIN Center contact details. */}
+            </div>
+
+            <div className="login-footer-block">
+              <div className="login-footer-eyebrow">Contact</div>
               <ul className="login-footer-details">
                 <li>
-                  <Mail size={13} aria-hidden="true" />
-                  {/* TODO(user) — verify this is still the official contact address. */}
-                  <span>contact@pangasin.gov.ph</span>
+                  <Mail size={18} aria-hidden="true" className="login-footer-icon" />
+                  <a
+                    href="mailto:contact@pangasin.gov.ph"
+                    className="login-footer-contact-link"
+                  >
+                    contact@pangasin.gov.ph
+                  </a>
                 </li>
                 <li>
-                  <Phone size={13} aria-hidden="true" />
-                  {/* TODO(user) — replace (075) XXX-XXXX with the official phone number. */}
-                  <span>(075) XXX-XXXX</span>
-                </li>
-                <li>
-                  <MapPin size={13} aria-hidden="true" />
-                  {/* TODO(user) — replace [campus] with the official office location. */}
+                  <MapPin size={18} aria-hidden="true" className="login-footer-icon" />
                   <span>ASIN Center, PSU Binmaley, Pangasinan</span>
                 </li>
+                {/* TODO(user): add official phone number row here. Phone placeholder "(075) XXX-XXXX" intentionally hidden. */}
               </ul>
             </div>
 
             <div className="login-footer-block">
               <div className="login-footer-eyebrow">Developed by</div>
-              {/* TODO(user) — the developer credits were intentionally removed.
-                  Real names, program, and year are pending. */}
               <p className="login-footer-credits">
-                PangAsin Development Team — BS Information Technology Major in Data
-                Analytics, 2027. Built for the ASIN Center.
+                <span className="login-footer-dev-name">PangAsin Development Team</span>
+                <br />
+                BS Information Technology, Major in Data Analytics,
+                Pangasinan State University
               </p>
-              <p className="login-footer-meta">
-                PangAsin — salt production monitoring, forecasting, and decision
-                support system.
-              </p>
+              <p className="login-footer-meta">Built for the ASIN Center</p>
             </div>
           </div>
 
           <div className="login-footer-bottom">
-            <span>© 2026 PangAsin / ASIN Center</span>
+            <div className="login-footer-bottom-row">
+              <span className="login-footer-copyright">
+                © 2026 ASIN Center, Pangasinan State University
+              </span>
+              <span className="login-footer-policy">RA 11985</span>
+            </div>
           </div>
         </Container>
       </footer>

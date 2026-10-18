@@ -29,6 +29,19 @@ def catch_all(path):
     if path:
         file_path = os.path.join(REACT_BUILD_DIR, path)
         if os.path.isfile(file_path):
-            return send_from_directory(REACT_BUILD_DIR, path)
-    return _serve_react()
+            response = send_from_directory(REACT_BUILD_DIR, path)
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            return response
+    response = _serve_react()
+    return response
+
+
+@public_dashboard_react_bp.after_request
+def _add_cors_headers(response):
+    """Vite adds `crossorigin` to module scripts in production builds. Browsers
+    require Access-Control-Allow-Origin for cross-origin (CORS) script requests,
+    even same-origin when the crossorigin attribute is present. Without it the
+    JS bundle is blocked and the page shows a white screen."""
+    response.headers.setdefault("Access-Control-Allow-Origin", "*")
+    return response
 

@@ -88,3 +88,45 @@ npm run build
 - Python 3.11+ is recommended. The frontend was built with Node 18+ if you need to rebuild it.
 - The app runs on a **single server** (`python run.py`) — no Vite/Node dev server is needed to view the system.
 - React frontend is pre-built in `app/static/react/` and served by Flask; Bootstrap is bundled in that build.
+- `statsmodels` is optional: if it is not installed, SARIMAX is skipped as a forecast candidate and the app falls back to the other models (`pip install statsmodels`).
+
+## Glossary
+
+One term = one meaning, everywhere (UI, API fields, code). Definitions live in
+`app/labels.py` (backend) and `frontend/src/constants/labels.js` (frontend).
+
+| Term | Code name | Unit | Meaning |
+|------|-----------|------|---------|
+| Recorded production | `recorded_mt` / `recordedMt` | MT | Total approved production volume, from validated records only. |
+| Forecast production | `forecast_mt` / `forecastMt` | MT | Model-predicted production volume for a future month. |
+| Forecast production total | `forecast_total_mt` / `forecastTotalMt` | MT | Sum of monthly forecast volumes over the selected horizon. |
+| Local production (benchmark) | `local_production_mt` / `localProductionMt` | MT | Benchmark figure for local salt production from the demand benchmark table. |
+| Salt demand | `demand_mt` / `demandMt` | MT | Annual salt demand benchmark from the provincial demand benchmark. |
+| Demand shortfall | `demand_shortfall_mt` / `demandShortfallMt` | MT | Forecast production minus salt demand (negative = surplus). |
+| Recorded coverage | `recorded_coverage_pct` / `recordedCoveragePct` | % | Approved recorded production / salt demand (7 salt-producing municipalities only). |
+| Share of local production | `recorded_share_of_local_pct` / `recordedShareOfLocalPct` | % | Recorded production / local production benchmark. |
+| Import share of demand | `import_share_pct` / `importSharePct` | % | Import volume / salt demand. |
+| Production target | `production_target_mt` / `productionTargetMt` | MT | Monthly or annual production goal set by the user. |
+| Data sufficiency | `data_sufficiency` / `dataSufficiency` | — | Sufficient / Limited / Insufficient history to forecast. |
+| Forecast confidence | `forecast_confidence` / `forecastConfidence` | — | High / Moderate / Low; combines data amount and past accuracy, not a statistical confidence level. |
+| Forecast method | `forecast_method` / `forecastMethod` | — | Linear Regression, Random Forest, ARIMA, SARIMAX, Seasonal baseline, or Not forecast. |
+| Expected range (90%) | `range_low_mt` / `range_high_mt` | MT | Lower / upper bound of the 90% expected range for forecast production. |
+| Direction | `trend_direction` / `trendDirection` | — | Increasing / Stable / Declining. |
+| Change vs recent average | `change_vs_recent_avg_pct` / `changeVsRecentAvgPct` | % | Percentage change of forecast versus the recent historical average. |
+| Incomplete recent months | `partial_reporting_tail` / `partialReportingTail` | — | The latest year is under-reported relative to the latest complete year. |
+| Accuracy check | `backtest` | — | Holdout comparison of actual vs predicted for the chosen model. |
+| Average error | `mae_mt` / `maeMt` | MT | Mean Absolute Error of the chosen model. |
+| Typical error | `rmse_mt` / `rmseMt` | MT | Root Mean Square Error of the chosen model. |
+| Average error (%) | `mape_pct` / `mapePct` | % | Mean Absolute Percentage Error of the chosen model. |
+| Seasonal pattern | `seasonal_pattern` / `seasonalPattern` | — | Average production by calendar month (replaces heatmap). |
+| Municipality forecast summary | `municipality_forecast_summary` / `municipalityForecastSummary` | — | Per-municipality forecast volumes and method (replaces outlook). |
+| Yield per salt bed | `yield_per_bed_mt` / `yieldPerBedMt` | MT per bed | Recorded production / number of salt beds. |
+| Yield per hectare | `yield_per_ha_mt` / `yieldPerHaMt` | MT per hectare | Recorded production / total production area (m² → ha). `area_per_salt_bed` is stored in m². |
+| Reporting completeness | `reporting_grid` / `reportingGrid` | — | Which months each municipality reported, over the last 36 months. |
+| Coverage | `coverage_pct` / `coveragePct` | % | Demand coverage only; not month reporting. |
+
+Scope label for all municipalities: `all_municipalities` → "All 7 municipalities" (never "province-wide" or "Pangasinan total").
+
+Forecast method display names: `linear_regression` = Linear Regression, `random_forest` = Random Forest, `arima` = ARIMA, `sarimax` = SARIMAX, `seasonal_anchor` = Seasonal baseline (last complete year), `none` = Not forecast (insufficient data).
+
+Main views never show acronyms (MAE, RMSE, MAPE, R², model orders); they appear only in the collapsed "How this forecast was made" panel, plain-English name first, acronym in parentheses.

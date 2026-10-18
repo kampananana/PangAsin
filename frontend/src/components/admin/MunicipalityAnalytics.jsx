@@ -1,25 +1,19 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Row, Col, Alert, Card, Table } from 'react-bootstrap';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, PieChart, Pie, LabelList } from 'recharts';
-import { getAdminStats, loadPublicDashboardData, getMunicipalityProduction, getDemographicsByMunicipality } from '../../services/dataService';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, PieChart, Pie, LabelList,
+} from 'recharts';
+import {
+  getAdminStats, loadPublicDashboardData, getMunicipalityProduction, getDemographicsByMunicipality,
+} from '../../services/dataService';
 import { BRAND, MUNICIPALITY_COLORS, GENDER } from '../../theme/colors';
 import PageHeader from './PageHeader';
 import { SkeletonBlock, SkeletonCards, SkeletonChart } from '../Skeleton';
-
-function ChartTooltip({ active, payload, nameFormatter }) {
-  if (!active || !payload || !payload.length) return null;
-  return (
-    <div className="admin-chart-tooltip">
-      {payload.map((entry, i) => (
-        <div key={entry.dataKey || i}>
-          <div className="ct-value">{nameFormatter ? nameFormatter(entry.value) : `${Number(entry.value).toLocaleString()}`}</div>
-          <div className="ct-sub">{entry.name}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
+import { formatMT, formatMTWithUnit } from '../../utils/volumeFormat';
+import ChartCaption from '../ChartCaption';
+import KpiCard from '../ui/KpiCard';
+import KpiGrid from '../ui/KpiGrid';
 
 const MUNI_ORDER = ['Dasol', 'Infanta', 'Bani', 'Bolinao', 'Anda', 'Alaminos City', 'San Fabian'];
 
@@ -43,6 +37,20 @@ const AGE_BANDS = [
   { label: '61+', field: 'producers_61_plus' },
 ];
 
+function ChartTooltip({ active, payload, nameFormatter }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="admin-chart-tooltip">
+      {payload.map((entry, i) => (
+        <div key={entry.dataKey || i}>
+          <div className="ct-value">{nameFormatter ? nameFormatter(entry.value) : `${Number(entry.value).toLocaleString()}`}</div>
+          <div className="ct-sub">{entry.name}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function MunicipalityAnalytics() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -51,6 +59,7 @@ export default function MunicipalityAnalytics() {
   const [provinceMode, setProvinceMode] = useState(true);
   const [methodData, setMethodData] = useState([]);
   const [chartMuni, setChartMuni] = useState(null);
+  const [activeTab, setActiveTab] = useState('age');
 
   useEffect(() => {
     getAdminStats()
@@ -93,9 +102,6 @@ export default function MunicipalityAnalytics() {
 
   const muniColor = (name) => MUNICIPALITY_COLORS[name] || BRAND.ocean;
 
-  /* WHAT: Isalamin ang global municipality filter (URL ?muni=) sa sariling chips nito.
-     WHY: para parehas ang scope ng hero at ng analytics; hindi ito nakikipag-away sa
-          manual na chip clicks (umaandar lang kapag nagbago ang URL muni o ang data). */
   const [searchParams] = useSearchParams();
   const urlMuni = searchParams.get('muni') || '';
   useEffect(() => {
@@ -110,7 +116,6 @@ export default function MunicipalityAnalytics() {
       setProvinceMode(true);
       setHidden(new Set());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlMuni, rows]);
 
   if (loading) {
@@ -118,10 +123,10 @@ export default function MunicipalityAnalytics() {
       <div className="skeleton-dashboard">
         <SkeletonBlock width="45%" height={24} />
         <SkeletonBlock width="70%" height={13} />
-        <div className="mt-4"><SkeletonCards count={3} /></div>
+        <div className="mt-4"><SkeletonCards count={4} /></div>
         <div className="row g-3 mt-1">
-          <div className="col-lg-7"><div className="skeleton-card"><SkeletonChart height={300} /></div></div>
-          <div className="col-lg-5"><div className="skeleton-card"><SkeletonChart height={300} /></div></div>
+          <div className="col-lg-8"><div className="skeleton-card"><SkeletonChart height={300} /></div></div>
+          <div className="col-lg-4"><div className="skeleton-card"><SkeletonChart height={240} /></div></div>
         </div>
       </div>
     );
@@ -157,26 +162,16 @@ export default function MunicipalityAnalytics() {
     ? <span className="badge bg-primary ms-2">Filtered: {chartMuni}</span>
     : <span className="badge bg-secondary ms-2">Province-wide</span>;
 
-  /* ---- Registered producers ---- */
-  const topRegistered = registeredData.reduce((best, r) => (r.registered > best.registered ? r : best), registeredData[0] || null);
+  // KPI computations
   const registeredTotal = visibleRows.reduce((s, r) => s + r.registered, 0);
+  const totalMunicipalities = visibleRows.length;
+  const totalBeds = visibleRows.reduce((s, r) => s + r.beds, 0);
+  const totalArea = visibleRows.reduce((s, r) => s + r.area, 0);
 
-  function registeredCaption() {
-    if (!topRegistered || topRegistered.registered <= 0) {
-      return (
-        <div className="chart-caption">
-          <b>No registered producer data</b> available for the selected municipalities.
-        </div>
-      );
-    }
-    return (
-      <div className="chart-caption">
-        <b>{topRegistered.name}</b> has the most registered producers at <b>{topRegistered.registered.toLocaleString()}</b>.
-      </div>
-    );
-  }
+  // Registered producers chart data
+  const topRegistered = registeredData.reduce((best, r) => (r.registered > best.registered ? r : best), registeredData[0] || null);
 
-  /* ---- Production methods (aggregate over active municipalities) ---- */
+  // Production methods
   const activeMethodRows = methodData.filter((m) => activeNames.has(m.name));
   const methods = [
     { key: 'solar', value: activeMethodRows.reduce((s, m) => s + (m.solarProductionMT || 0), 0) },
@@ -190,6 +185,7 @@ export default function MunicipalityAnalytics() {
     fill: METHOD_COLORS[m.key],
   }));
 
+  // Environment
   const environmentRows = (data.environment_by_municipality || [])
     .filter((row) => chartMuni ? row.municipality_name === chartMuni : !hidden.has(row.municipality_name));
   const environmentReportCount = environmentRows.reduce((sum, row) => sum + row.report_count, 0);
@@ -202,20 +198,7 @@ export default function MunicipalityAnalytics() {
     return totals;
   }, {});
 
-  function methodCaption() {
-    if (methods.length === 0) return null;
-    const top = methods.reduce((b, m) => (m.value > b.value ? m : b), methods[0]);
-    const pct = methodsTotal > 0 ? ((top.value / methodsTotal) * 100).toFixed(1) : 0;
-    return (
-      <div className="chart-caption">
-        <b>{METHOD_LABELS[top.key]}</b> leads production with <b>{pct}%</b> of the recorded volume.
-      </div>
-    );
-  }
-
-  /* ---- Producer demographics (gender) ---- */
-  const hasDemogData = visibleRows.some((r) => (r.male || r.female) > 0);
-
+  // Demographics
   const demogTotalMale = visibleRows.reduce((s, r) => s + r.male, 0);
   const demogTotalFemale = visibleRows.reduce((s, r) => s + r.female, 0);
   const demogTotal = demogTotalMale + demogTotalFemale;
@@ -225,36 +208,6 @@ export default function MunicipalityAnalytics() {
     { name: 'Female Producers', value: demogTotalFemale, fill: GENDER.female },
   ] : []);
 
-  function genderDonutCaption() {
-    if (!hasDemogData) {
-      return (
-        <div className="chart-caption">
-          <b>No producer gender data</b> available for the selected municipalities.
-        </div>
-      );
-    }
-    if (demogTotal === 0) return null;
-    const malePct = (demogTotalMale / demogTotal) * 100;
-    const femalePct = (demogTotalFemale / demogTotal) * 100;
-    const headline = malePct >= femalePct
-      ? `Male producers outnumber female, ${malePct.toFixed(1)}% to ${femalePct.toFixed(1)}%.`
-      : `Female producers outnumber male, ${femalePct.toFixed(1)}% to ${malePct.toFixed(1)}%.`;
-    let title;
-    if (visibleRows.length === 1) {
-      title = `${visibleRows[0].name} records ${demogTotal.toLocaleString()} producers.`;
-    } else if (visibleRows.length === present.size) {
-      title = `Across Pangasinan, ${demogTotal.toLocaleString()} producers are recorded.`;
-    } else {
-      title = `Across the ${visibleRows.length} selected municipalities, ${demogTotal.toLocaleString()} producers are recorded.`;
-    }
-    return (
-      <div className="chart-caption">
-        {title} {headline}
-      </div>
-    );
-  }
-
-  /* ---- Producer demographics (age) ---- */
   const demogByMuni = getDemographicsByMunicipality();
   const ageValues = AGE_BANDS.map((b) => ({
     name: b.label,
@@ -262,24 +215,6 @@ export default function MunicipalityAnalytics() {
   }));
   const ageTotal = ageValues.reduce((s, a) => s + a.value, 0);
   const ageData = ageValues.map((a) => ({ ...a, total: ageTotal, pct: ageTotal > 0 ? (a.value / ageTotal) * 100 : 0 }));
-  const ageMax = Math.max(1, ...ageValues.map((a) => a.value));
-
-  function ageCaption() {
-    if (ageTotal === 0) {
-      return (
-        <div className="chart-caption">
-          <b>No producer age data</b> available for the selected municipalities.
-        </div>
-      );
-    }
-    const top = ageData.reduce((b, a) => (a.value > b.value ? a : b), ageData[0]);
-    return (
-      <div className="chart-caption">
-        The <b>{top.name}</b> age bracket is the largest group at
-        {' '}<b>{top.pct.toFixed(1)}%</b> of {ageTotal.toLocaleString()} recorded producers.
-      </div>
-    );
-  }
 
   return (
     <div>
@@ -290,52 +225,37 @@ export default function MunicipalityAnalytics() {
         subtitle="Deep-dive production breakdown for each municipality."
       />
 
-      {/* WHAT: Horizontally scrollable segmented chips — walang checkbox swatch.
-         WHY: hindi na "checkbox" ang itsura; isang row lang, nagiging scrollable
-              sa maliit na screen (walang orphan wrap). */}
-      <div className="muni-toggle" role="group" aria-label="Municipality filter">
-        <button
-          key="pangasinan"
-          type="button"
-          className={`muni-chip ${provinceMode ? 'muni-chip--on' : 'muni-chip--off'}`}
-          style={provinceMode ? { background: BRAND.ocean, borderColor: BRAND.ocean, color: '#fff' } : undefined}
-          onClick={selectPangasinan}
-          aria-pressed={provinceMode}
-          title="Whole-province aggregate"
-        >
-          Pangasinan
-        </button>
-        {MUNI_ORDER.map((name) => {
-          const inData = present.has(name);
-          const isOn = inData && !provinceMode && !hidden.has(name);
-          const isOff = inData && !provinceMode && hidden.has(name);
-          const cls = ['muni-chip'];
-          if (!inData) cls.push('muni-chip--no-data');
-          else if (isOn) cls.push('muni-chip--on');
-          else cls.push('muni-chip--off');
-          const color = muniColor(name);
-          return (
-            <button
-              key={name}
-              type="button"
-              className={cls.join(' ')}
-              style={isOn ? { background: color, borderColor: color, color: '#fff' } : undefined}
-              onClick={() => inData && toggleMuni(name)}
-              disabled={!inData}
-              aria-pressed={isOn}
-              aria-disabled={!inData}
-              title={!inData ? `${name} has no data` : isOff ? `Show ${name}` : `Hide ${name}`}
-            >
-              {name}
-              {!inData && <span className="muni-chip-none">no data</span>}
-            </button>
-          );
-        })}
-      </div>
+      {/* Row 1: KPI strip */}
+      <KpiGrid columns={4} className="fc-kpi-strip">
+        <KpiCard
+          icon={UserIcon}
+          title="Registered Producers"
+          value={registeredTotal}
+          supporting="across selected municipalities"
+        />
+        <KpiCard
+          icon={BuildingIcon}
+          title="Municipalities"
+          value={totalMunicipalities}
+          support="with production records"
+        />
+        <KpiCard
+          icon={BedIcon}
+          title="Salt Beds"
+          value={totalBeds}
+          support="total across selection"
+        />
+        <KpiCard
+          icon={MapPinIcon}
+          title="Total Area"
+          value={formatMT(totalArea)}
+          supporting="production area (m²)"
+        />
+      </KpiGrid>
 
-      {/* Row A: Registered Producers | Method Breakdown */}
+      {/* Row 2: Registered producers bar (8 cols) + Production method donut (4 cols) */}
       <Row className="g-3 mb-4">
-        <Col lg={6}>
+        <Col lg={8}>
           <Card className="encoder-card h-100">
             <Card.Header>
               <div className="admin-card-head d-flex align-items-center justify-content-between w-100">
@@ -358,19 +278,13 @@ export default function MunicipalityAnalytics() {
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={registeredData} margin={{ top: 18, right: 20, bottom: 5, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        {/* WHAT: Ipakita ang LAHAT ng x labels (niliko kapag mahaba).
-                           WHY: dati ay nilaktawan ng recharts ang Alaminos City. */}
                         <XAxis dataKey="name" interval={0} angle={-32} textAnchor="end" height={72} tick={{ fontSize: 11 }} />
                         <YAxis tick={{ fontSize: 12 }} allowDecimals={false} tickFormatter={(v) => Number(v).toLocaleString()} />
                         <Tooltip cursor={{ fill: 'rgba(21, 101, 200, 0.06)' }} content={<ChartTooltip />} />
                         <Bar dataKey="registered" name="Registered producers" radius={[6, 6, 0, 0]} maxBarSize={46}>
-                          {/* WHAT: Isang pangunahing kulay; ang top bar (index 0) lang ang highlight.
-                             WHY: walang gradient at walang per-muni colors — malinaw ang hierarchy. */}
                           {registeredData.map((entry, i) => (
                             <Cell key={i} fill={i === 0 ? BRAND.gold : BRAND.ocean} />
                           ))}
-                          {/* WHAT: Value labels sa tuktok ng bawat bar, may thousands separator.
-                             WHY: hindi na kailangan i-hover para malaman ang eksaktong bilang. */}
                           <LabelList
                             dataKey="registered"
                             position="top"
@@ -381,19 +295,23 @@ export default function MunicipalityAnalytics() {
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
-                  {registeredCaption()}
+                  {topRegistered && (
+                    <ChartCaption tone="info">
+                      <b>{topRegistered.name}</b> has the most registered producers at <b>{topRegistered.registered.toLocaleString()}</b>.
+                    </ChartCaption>
+                  )}
                 </div>
               )}
             </Card.Body>
           </Card>
         </Col>
 
-        <Col lg={6}>
+        <Col lg={4}>
           <Card className="encoder-card h-100">
             <Card.Header>
               <div className="admin-card-head d-flex align-items-center justify-content-between w-100">
                 <div>
-                  <h5 className="admin-card-head-title mb-0">Method Breakdown</h5>
+                  <h5 className="admin-card-head-title mb-0">Production Method</h5>
                   {chartFilterLabel}
                 </div>
               </div>
@@ -401,8 +319,8 @@ export default function MunicipalityAnalytics() {
             <Card.Body>
               {methods.length > 0 ? (
                 <div>
-                  <div style={{ minHeight: 300 }} className="d-flex align-items-center justify-content-center flex-wrap gap-4">
-                    <div style={{ width: 200, height: 200, flexShrink: 0 }}>
+                  <div style={{ minHeight: 260 }} className="d-flex align-items-center justify-content-center flex-wrap gap-4">
+                    <div style={{ width: 180, height: 180, flexShrink: 0 }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
@@ -410,7 +328,7 @@ export default function MunicipalityAnalytics() {
                             cx="50%"
                             cy="50%"
                             innerRadius={55}
-                            outerRadius={90}
+                            outerRadius={85}
                             paddingAngle={2}
                             dataKey="value"
                             stroke="none"
@@ -440,7 +358,11 @@ export default function MunicipalityAnalytics() {
                       })}
                     </div>
                   </div>
-                  {methodCaption()}
+                  {methods.length > 0 && (
+                    <ChartCaption tone="info">
+                      <b>{METHOD_LABELS[methods.reduce((b, m) => (m.value > b.value ? m : b), methods[0]).key]}</b> leads production.
+                    </ChartCaption>
+                  )}
                 </div>
               ) : (
                 <div className="chart-empty">
@@ -453,184 +375,229 @@ export default function MunicipalityAnalytics() {
         </Col>
       </Row>
 
-      {/* Row B: Producer demographics — gender | age */}
+      {/* Row 3: Producer profile card with tabs (Age, Gender) */}
       <Row className="g-3 mb-4">
-        <Col lg={6}>
+        <Col lg={12}>
           <Card className="encoder-card h-100">
             <Card.Header>
-              <div className="admin-card-head">
+              <div className="admin-card-head d-flex align-items-center justify-content-between w-100">
                 <div>
-                  <h5 className="admin-card-head-title">Producer Gender Distribution</h5>
+                  <h5 className="admin-card-head-title mb-0">Producer Profile</h5>
+                  {chartFilterLabel}
+                </div>
+                <div className="d-flex gap-2">
+                  <button
+                    className={`btn btn-sm ${activeTab === 'age' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                    onClick={() => setActiveTab('age')}
+                  >
+                    Age Distribution
+                  </button>
+                  <button
+                    className={`btn btn-sm ${activeTab === 'gender' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                    onClick={() => setActiveTab('gender')}
+                  >
+                    Gender Distribution
+                  </button>
+                </div>
+              </div>
+            </Card.Header>
+            <Card.Body>
+              {activeTab === 'age' ? (
+                ageTotal === 0 ? (
+                  <div className="chart-empty">
+                    <span className="chart-empty-chip">No data</span>
+                    No producer age data available for the selected municipalities.
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ height: 300 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={ageData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                          <defs>
+                            <linearGradient id="ageGradMuni" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={BRAND.ocean} stopOpacity={0.95} />
+                              <stop offset="100%" stopColor={BRAND.ocean} stopOpacity={0.55} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                          <YAxis tick={{ fontSize: 12 }} allowDecimals={false} domain={[0, Math.max(1, ...ageValues.map((a) => a.value))]} />
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (!active || !payload || !payload.length) return null;
+                              const d = payload[0].payload;
+                              return (
+                                <div className="admin-chart-tooltip">
+                                  <div className="ct-label">Age {d.name}</div>
+                                  <div className="ct-value">{d.value.toLocaleString()} producers</div>
+                                  <div className="ct-sub">{d.pct.toFixed(1)}% of {d.total.toLocaleString()} recorded</div>
+                                </div>
+                              );
+                            }}
+                            cursor={{ fill: 'rgba(21, 101, 200, 0.06)' }}
+                          />
+                          <Bar dataKey="value" name="Producers" radius={[6, 6, 0, 0]} maxBarSize={54}>
+                            {ageData.map((entry, i) => (
+                              <Cell key={i} fill="url(#ageGradMuni)" />
+                            ))}
+                            <LabelList
+                              dataKey="value"
+                              position="top"
+                              formatter={(v) => Number(v).toLocaleString()}
+                              style={{ fontSize: 11, fontWeight: 700, fill: 'var(--gray-700)' }}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <ChartCaption tone="info">
+                      The <b>{ageData.reduce((b, a) => (a.value > b.value ? a : b), ageData[0]).name}</b> age bracket is the largest group at <b>{ageData.reduce((b, a) => (a.value > b.value ? a : b), ageData[0]).pct.toFixed(1)}%</b> of {ageTotal.toLocaleString()} recorded producers.
+                    </ChartCaption>
+                  </>
+                )
+              ) : (
+                genderPieData.length === 0 ? (
+                  <div className="chart-empty">
+                    <span className="chart-empty-chip">No data</span>
+                    No producer gender data available for the selected municipalities.
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ minHeight: 260 }} className="d-flex align-items-center justify-content-center flex-wrap gap-4">
+                      <div style={{ width: 200, height: 200, flexShrink: 0 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={genderPieData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={56}
+                              outerRadius={92}
+                              paddingAngle={3}
+                              dataKey="value"
+                              stroke="none"
+                            >
+                              {genderPieData.map((entry, i) => (
+                                <Cell key={i} fill={entry.fill} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              formatter={(value, name) => [`${Number(value).toLocaleString()} producers`, name]}
+                              contentStyle={{ borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,.12)', fontSize: 12 }}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="donut-legend">
+                        {genderPieData.map((g) => (
+                          <div key={g.name} className="donut-legend-item">
+                            <span className="donut-legend-swatch" style={{ background: g.fill }} />
+                            <span className="donut-legend-name">{g.name}</span>
+                            <span className="donut-legend-value">{g.value.toLocaleString()}</span>
+                            <span className="donut-legend-pct">
+                              {demogTotal > 0 ? `${((g.value / demogTotal) * 100).toFixed(1)}%` : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <ChartCaption tone="info">
+                      {demogTotalMale >= demogTotalFemale
+                        ? `Male producers outnumber female, ${((demogTotalMale / demogTotal) * 100).toFixed(1)}% to ${((demogTotalFemale / demogTotal) * 100).toFixed(1)}%.`
+                        : `Female producers outnumber male, ${((demogTotalFemale / demogTotal) * 100).toFixed(1)}% to ${((demogTotalMale / demogTotal) * 100).toFixed(1)}%.`}
+                    </ChartCaption>
+                  </div>
+                )
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Row 4: Environment card */}
+      <Row className="g-3 mb-4">
+        <Col lg={12}>
+          <Card className="encoder-card h-100">
+            <Card.Header>
+              <div className="admin-card-head d-flex align-items-center justify-content-between w-100">
+                <div>
+                  <h5 className="admin-card-head-title mb-0">Environment</h5>
                   {chartFilterLabel}
                 </div>
               </div>
             </Card.Header>
             <Card.Body>
-              {genderPieData.length === 0 ? (
-                <div className="chart-empty">
-                  <span className="chart-empty-chip">No data</span>
-                  No producer gender data available for the selected municipalities.
-                </div>
-              ) : (
-                <div>
-                  <div style={{ minHeight: 300 }} className="d-flex align-items-center justify-content-center flex-wrap gap-4">
-                    <div style={{ width: 210, height: 210, flexShrink: 0 }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={genderPieData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={56}
-                            outerRadius={92}
-                            paddingAngle={3}
-                            dataKey="value"
-                            stroke="none"
-                          >
-                            {genderPieData.map((entry, i) => (
-                              <Cell key={i} fill={entry.fill} />
-                            ))}
-                          </Pie>
-                          <Tooltip
-                            formatter={(value, name) => [`${Number(value).toLocaleString()} producers`, name]}
-                            contentStyle={{ borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,.12)', fontSize: 12 }}
-                          />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="donut-legend">
-                      {genderPieData.map((g) => (
-                        <div key={g.name} className="donut-legend-item">
-                          <span className="donut-legend-swatch" style={{ background: g.fill }} />
-                          <span className="donut-legend-name">{g.name}</span>
-                          <span className="donut-legend-value">{g.value.toLocaleString()}</span>
-                          <span className="donut-legend-pct">
-                            {demogTotal > 0 ? `${((g.value / demogTotal) * 100).toFixed(1)}%` : ''}
-                          </span>
-                        </div>
+              <div style={{ height: 260 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={[
+                      { name: 'Reports', value: environmentReportCount },
+                      { name: 'Salt Beds', value: environmentBedCount },
+                    ]}
+                    margin={{ top: 10, right: 20, bottom: 10, left: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload || payload.length === 0) return null;
+                        const d = payload[0].payload;
+                        return (
+                          <div className="fc-tooltip">
+                            <div className="fc-tooltip-label">{d.name}</div>
+                            <div className="fc-tooltip-row"><span>Count</span><b>{d.value.toLocaleString()}</b></div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar dataKey="value" name="Count" radius={[4, 4, 0, 0]} isAnimationActive>
+                      {[
+                        { fill: BRAND.green },
+                        { fill: BRAND.ocean },
+                      ].map((fill, i) => (
+                        <Cell key={`env-${i}`} fill={fill.fill} />
                       ))}
-                    </div>
-                  </div>
-                  {genderDonutCaption()}
-                </div>
-              )}
-            </Card.Body>
-          </Card>
-        </Col>
-
-        <Col lg={6}>
-          <Card className="encoder-card h-100">
-            <Card.Header>
-              <div className="admin-card-head">
-                <h5 className="admin-card-head-title">Producer Age Distribution</h5>
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-            </Card.Header>
-            <Card.Body>
-              {ageTotal === 0 ? (
-                <div className="chart-empty">
-                  <span className="chart-empty-chip">No data</span>
-                  No producer age data available for the selected municipalities.
-                </div>
-              ) : (
-                <div>
-                  <div style={{ height: 300 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={ageData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                        <defs>
-                          <linearGradient id="ageGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={BRAND.ocean} stopOpacity={0.95} />
-                            <stop offset="100%" stopColor={BRAND.ocean} stopOpacity={0.55} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                        <YAxis tick={{ fontSize: 12 }} allowDecimals={false} domain={[0, ageMax]} />
-                        <Tooltip
-                          content={({ active, payload }) => {
-                            if (!active || !payload || !payload.length) return null;
-                            const d = payload[0].payload;
-                            return (
-                              <div className="admin-chart-tooltip">
-                                <div className="ct-label">Age {d.name}</div>
-                                <div className="ct-value">{d.value.toLocaleString()} producers</div>
-                                <div className="ct-sub">{d.pct.toFixed(1)}% of {d.total.toLocaleString()} recorded</div>
-                              </div>
-                            );
-                          }}
-                          cursor={{ fill: 'rgba(21, 101, 200, 0.06)' }}
-                        />
-                        <Bar dataKey="value" name="Producers" radius={[6, 6, 0, 0]} maxBarSize={54}>
-                          {ageData.map((entry, i) => (
-                            <Cell key={i} fill="url(#ageGrad)" />
-                          ))}
-                          <LabelList
-                            dataKey="value"
-                            position="top"
-                            formatter={(v) => Number(v).toLocaleString()}
-                            style={{ fontSize: 11, fontWeight: 700, fill: 'var(--gray-700)' }}
-                          />
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                  {ageCaption()}
-                </div>
-              )}
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-
-      <Row className="g-3 mb-4">
-        <Col lg={7}>
-          <Card className="encoder-card h-100">
-            <Card.Header>
-              <div className="admin-card-head">
-                <h5 className="admin-card-head-title">Environment Report Area by Municipality</h5>
-                {chartFilterLabel}
-              </div>
-            </Card.Header>
-            <Card.Body>
-              {environmentRows.length === 0 ? (
-                <div className="chart-empty"><span className="chart-empty-chip">No approved reports</span>No Environment Report data is available for this selection.</div>
-              ) : (
-                <div style={{ height: 300 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={environmentRows} margin={{ top: 8, right: 20, bottom: 8, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="municipality_name" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 12 }} />
-                      <Tooltip content={<ChartTooltip nameFormatter={(value) => `${Number(value).toLocaleString()} m²`} />} />
-                      <Bar dataKey="total_production_area_sqm" name="Approved environment area" fill={BRAND.green} radius={[5, 5, 0, 0]} maxBarSize={46} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col lg={5}>
-          <Card className="encoder-card h-100">
-            <Card.Header><h5 className="admin-card-head-title mb-0">Approved Environment Reports</h5></Card.Header>
-            <Card.Body>
-              <Row className="g-3 mb-3">
-                <Col xs={4}><div className="small text-muted">Reports</div><strong>{environmentReportCount.toLocaleString()}</strong></Col>
-                <Col xs={4}><div className="small text-muted">Salt beds</div><strong>{environmentBedCount.toLocaleString()}</strong></Col>
-                <Col xs={4}><div className="small text-muted">Area</div><strong>{environmentArea.toLocaleString()} m²</strong></Col>
+              <Row className="g-3 mt-3">
+                <Col xs={4}>
+                  <div className="small text-muted">Reports</div>
+                  <strong>{environmentReportCount.toLocaleString()}</strong>
+                </Col>
+                <Col xs={4}>
+                  <div className="small text-muted">Salt beds</div>
+                  <strong>{environmentBedCount.toLocaleString()}</strong>
+                </Col>
+                <Col xs={4}>
+                  <div className="small text-muted">Area</div>
+                  <strong>{formatMT(environmentArea)} m\u00B2</strong>
+                </Col>
               </Row>
-              <div className="small text-muted mb-2">Reported methods</div>
+              <div className="small text-muted mt-3">Reported methods</div>
               {Object.entries(environmentMethods).filter(([, count]) => count > 0).length === 0 ? (
                 <div className="small text-muted">No approved method data.</div>
-              ) : Object.entries(environmentMethods).map(([method, count]) => (
-                <div key={method} className="d-flex justify-content-between border-bottom py-2">
-                  <span className="text-capitalize">{method}</span><strong>{count.toLocaleString()}</strong>
+              ) : (
+                <div className="small">
+                  {Object.entries(environmentMethods).map(([method, count]) => (
+                    <div key={method} className="d-flex justify-content-between border-bottom py-1 mb-1">
+                      <span className="text-capitalize">{method}</span>
+                      <strong>{count.toLocaleString()}</strong>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              <ChartCaption tone="info">
+                Environment reports and salt bed counts for the selected municipalities.
+              </ChartCaption>
             </Card.Body>
           </Card>
         </Col>
       </Row>
 
+      {/* Row 5: Municipality details table */}
       <Card className="encoder-card">
         <Card.Header as="h5">Municipality Details</Card.Header>
         <Card.Body className="p-0">
@@ -661,5 +628,47 @@ export default function MunicipalityAnalytics() {
         </Card.Body>
       </Card>
     </div>
+  );
+}
+
+// Local icon components (Replaces lucide imports for tree-shaking safety)
+function UserIcon({ size = 19, strokeWidth = 2 }) {
+  return (
+    <svg size={size} strokeWidth={strokeWidth} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+function BuildingIcon({ size = 19, strokeWidth = 2 }) {
+  return (
+    <svg size={size} strokeWidth={strokeWidth} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <line x1="3" y1="15" x2="21" y2="15" />
+      <line x1="6" y1="3" x2="6" y2="15" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+      <line x1="18" y1="3" x2="18" y2="15" />
+    </svg>
+  );
+}
+
+function BedIcon({ size = 19, strokeWidth = 2 }) {
+  return (
+    <svg size={size} strokeWidth={strokeWidth} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <line x1="3" y1="15" x2="21" y2="15" />
+      <line x1="7" y1="15" x2="7" y2="3" />
+      <line x1="13" y1="15" x2="13" y2="3" />
+    </svg>
+  );
+}
+
+function MapPinIcon({ size = 19, strokeWidth = 2 }) {
+  return (
+    <svg size={size} strokeWidth={strokeWidth} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0" />
+      <circle cx="12" cy="10" r="3" />
+    </svg>
   );
 }

@@ -25,6 +25,7 @@ def create_app(config_class=Config):
     from app.blueprints.public_api import public_api_bp
     from app.blueprints.encoder_api import encoder_api_bp
     from app.blueprints.admin_api import admin_api_bp
+    from app.blueprints.analytics_api import analytics_api_bp
     from app.blueprints.forecast_api import forecast_api_bp
     from app.blueprints.reports_api import reports_api_bp
     from app.blueprints.producers_api import producers_api_bp
@@ -35,6 +36,7 @@ def create_app(config_class=Config):
     app.register_blueprint(public_api_bp)
     app.register_blueprint(encoder_api_bp)
     app.register_blueprint(admin_api_bp)
+    app.register_blueprint(analytics_api_bp)
     app.register_blueprint(forecast_api_bp)
     app.register_blueprint(reports_api_bp)
     app.register_blueprint(producers_api_bp)

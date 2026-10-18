@@ -39,6 +39,7 @@ MAX_MONTHLY_VOLUME_MT = 2000
 # National-level sector demand breakdown (reference data, MT). Not stored in the
 # demand_benchmarks table (which holds annual supply/demand figures); served as a
 # labeled reference constant for the sector breakdown visualisation.
+# DEFAULT ASSUMPTION: hardcoded reference values, not derived from production_records.
 SECTOR_DEMAND = {
     "household": 320000.0,
     "foodProcessing": 180000.0,

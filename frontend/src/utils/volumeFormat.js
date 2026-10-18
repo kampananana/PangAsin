@@ -6,3 +6,9 @@ export function formatMT(value) {
   if (!Number.isFinite(n)) return '—';
   return (Math.round(n * 1000) / 1000).toLocaleString();
 }
+
+export function formatMTWithUnit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return `${(Math.round(n * 1000) / 1000).toLocaleString()} MT`;
+}
