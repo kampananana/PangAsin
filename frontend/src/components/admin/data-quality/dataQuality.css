@@ -1,0 +1,348 @@
+/* WHAT: Styles for the admin Data Quality page.
+   WHY: Scoped to .dq-page and kept in its own file so the shared index.css and
+        the other admin pages are never touched. Same tokens as the rest of the
+        admin (--p-navy, --p-brown) so the page looks like the rest of the app. */
+
+.dq-page {
+  --dq-navy: var(--p-navy, #0C2340);
+  --dq-brown: var(--p-brown, #504020);
+  --dq-ok: #1E9E6A;
+  --dq-watch: #F09A28;
+  --dq-critical: #D64545;
+  --dq-text: #17233B;
+  --dq-muted: #6C757D;
+  --dq-line: #E7EAEF;
+  --dq-cell-w: 18px;
+  --dq-cell-h: 22px;
+  --dq-sum-w: 96px;
+  --dq-score-w: 78px;
+}
+
+.dq-page.is-refreshing .dq-refreshable {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+/* ===== Header controls (Dashboard language: ui-btn-outline / ui-btn-primary) ===== */
+
+.dq-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dq-range-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dq-range-btn {
+  flex: 1 1 auto;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.dq-refresh-btn {
+  justify-content: center;
+  white-space: nowrap;
+}
+
+/* ===== Calm note (one quiet line, no action) ===== */
+
+.dq-calm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--dq-muted);
+}
+
+.dq-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* ===== Heatmap ===== */
+
+.dq-heat-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+
+.dq-heat-scroll::-webkit-scrollbar { height: 8px; }
+.dq-heat-scroll::-webkit-scrollbar-thumb { background: #D7DDE5; border-radius: 999px; }
+.dq-heat-scroll::-webkit-scrollbar-track { background: transparent; }
+
+.dq-heat-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(128px, max-content)
+    repeat(var(--dq-cols, 36), minmax(14px, 1fr))
+    var(--dq-sum-w)
+    var(--dq-score-w);
+  gap: 3px;
+  align-items: center;
+  width: 100%;
+  min-width: max-content;
+}
+
+.dq-heat-corner {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: #fff;
+}
+
+.dq-heat-year {
+  grid-row: 1;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--dq-muted);
+  letter-spacing: 0.04em;
+  border-bottom: 2px solid var(--dq-line);
+  padding-bottom: 3px;
+}
+
+.dq-heat-month {
+  grid-row: 2;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #9AA4B2;
+  padding-bottom: 3px;
+}
+
+.dq-heat-sum-head {
+  grid-row: 1 / span 2;
+  text-align: right;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dq-muted);
+  padding-right: 4px;
+}
+
+.dq-heat-name {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px 3px 6px;
+  background: #fff;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dq-text);
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.dq-heat-name:hover { background: #F3F7FC; }
+.dq-heat-name:focus-visible { outline: 2px solid var(--p-ocean, #1565C8); outline-offset: 1px; }
+.dq-heat-name.is-selected { background: #EAF1FB; border-color: #B7CFEC; }
+
+.dq-heat-cell {
+  width: 100%;
+  max-width: 22px;
+  height: var(--dq-cell-h);
+  margin: 0 auto;
+  border-radius: 4px;
+  border: 1px solid transparent;
+}
+
+.dq-heat-cell--reported { background: #D7F2E3; border-color: #86CEAC; }
+.dq-heat-cell--pending {
+  background: repeating-linear-gradient(135deg, #FBE4B8 0 4px, #F6CF8B 4px 8px);
+  border-color: #DFA74C;
+}
+.dq-heat-cell--missing { background: #FAE1E1; border-color: #E5ACAC; }
+.dq-heat-cell--current { background: #F4F6F9; border: 1px dashed #BAC4D1; }
+
+.dq-heat-sum {
+  text-align: right;
+  padding-right: 4px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--dq-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.dq-heat-score {
+  text-align: right;
+  padding-right: 2px;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.dq-heat-score--ok { color: var(--dq-ok); }
+.dq-heat-score--watch { color: #B7791F; }
+.dq-heat-score--critical { color: var(--dq-critical); }
+
+.dq-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dq-dot--ok { background: var(--dq-ok); }
+.dq-dot--watch { background: var(--dq-watch); }
+.dq-dot--critical { background: var(--dq-critical); }
+
+.dq-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 12px;
+}
+
+.dq-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dq-muted);
+}
+
+.dq-legend-swatch {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+}
+
+.dq-legend-swatch--reported { background: #D7F2E3; border-color: #86CEAC; }
+.dq-legend-swatch--pending {
+  background: repeating-linear-gradient(135deg, #FBE4B8 0 4px, #F6CF8B 4px 8px);
+  border-color: #DFA74C;
+}
+.dq-legend-swatch--missing { background: #FAE1E1; border-color: #E5ACAC; }
+.dq-legend-swatch--current { background: #F4F6F9; border: 1px dashed #BAC4D1; }
+
+.dq-formula {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dq-muted);
+}
+
+.dq-formula b { color: var(--dq-text); }
+
+/* ===== Field completeness ===== */
+
+.dq-field {
+  display: grid;
+  grid-template-columns: minmax(130px, 210px) minmax(60px, 360px) 52px;
+  gap: 12px;
+  align-items: center;
+  justify-content: start;
+  padding: 7px 0;
+}
+
+.dq-field-label {
+  font-size: 13px;
+  color: var(--dq-text);
+}
+
+.dq-field-bar {
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: #EDF0F4;
+  overflow: hidden;
+}
+
+.dq-field-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--dq-ok);
+}
+
+.dq-field-fill--watch { background: var(--dq-watch); }
+.dq-field-fill--critical { background: var(--dq-critical); }
+
+.dq-field-value {
+  text-align: right;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--dq-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.dq-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.dq-scope-note {
+  font-size: 12.5px;
+  color: var(--dq-muted);
+}
+
+/* ===== Footer ===== */
+
+.dq-footnote {
+  margin: 18px 0 0;
+  font-size: 12px;
+  color: var(--dq-muted);
+}
+
+/* ===== Focus + motion ===== */
+
+.dq-page :focus-visible {
+  outline: 2px solid var(--p-ocean, #1565C8);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dq-page *,
+  .dq-page *::before,
+  .dq-page *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .dq-field { grid-template-columns: minmax(96px, 1fr) minmax(40px, 1fr) 44px; gap: 8px; }
+  .dq-field-label { font-size: 12.5px; }
+}
+
+/* WHAT: On a phone the pinned score columns would eat the month cells, so the
+        summary columns scroll with the grid again.
+   WHY: The month pattern is the point of the heatmap on a small screen; the
+        numbers are already in the KPI cards and the Needs attention list. */
+@media (max-width: 767.98px) {
+  .dq-heat-sum,
+  .dq-heat-score,
+  .dq-heat-sum-head {
+    position: static;
+  }
+}

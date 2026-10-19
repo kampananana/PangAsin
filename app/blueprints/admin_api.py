@@ -14,8 +14,8 @@ from app.models.demand_benchmark import DemandBenchmark
 from app.extensions import db
 from datetime import datetime, date, timedelta
 from sqlalchemy import func
-from app.services.aggregates import _reporting_grid
-from app.constants import AGE_BUCKET_FIELDS, QUALITY_FIELDS, QUALITY_WEIGHTS, SECTOR_DEMAND, SECTOR_DEMAND_NOTE
+from app.services.data_quality import build_data_quality, DATA_QUALITY_RANGES
+from app.constants import AGE_BUCKET_FIELDS, SECTOR_DEMAND, SECTOR_DEMAND_NOTE
 from app.utils import _admin_only, _parse_date
 
 admin_api_bp = Blueprint("admin_api", __name__, url_prefix="/api/admin")
@@ -759,112 +759,28 @@ def stats():
 @admin_api_bp.route("/data-quality", methods=["GET"])
 @login_required
 def data_quality():
-    # WHAT: Compute per-municipality data-completeness scores plus reporting
-    #       completeness grid (which months each municipality reported).
-    # WHY: Tinutukoy kung gaano kumpleto ang records ng bawat bayan bago
-    #      i-approved, at kung may mga buwan na naka-gap sa pag-report.
+    # WHAT: Serve the whole Data Quality payload in one response.
+    # WHY: The page must show only what the database really contains, so every
+    #      score, cell state and threshold is computed in the service and sent
+    #      along - the browser never guesses a number of its own.
     if _admin_only():
         return jsonify({"error": "Admin access only."}), 403
 
-    range_months = int(request.args.get("range") or 36)
-    if range_months not in (12, 24, 36):
-        range_months = 36
+    # WHY: "months" is the documented parameter ("all" = every month since data
+    #      gathering started); "range" is still accepted because the shared API
+    #      client sends that one.
+    raw_months = request.args.get("months") or request.args.get("range") or 36
+    if str(raw_months).strip().lower() == "all":
+        range_months = "all"
+    else:
+        try:
+            range_months = int(raw_months)
+        except (TypeError, ValueError):
+            range_months = 36
+        if range_months not in DATA_QUALITY_RANGES:
+            range_months = 36
 
-    records = ProductionRecord.query.all()
-    total_records = len(records)
-
-    # Records awaiting validation (pending, rejected, returned) — admin must act.
-    pending_count = (
-        ProductionRecord.query
-        .filter(ProductionRecord.status.in_(("pending", "rejected", "returned")))
-        .count()
-    )
-
-    by_muni = {}
-    for r in records:
-        muni_id = r.municipality_id
-        muni_name = r.municipality.name if r.municipality else "Unknown"
-        bucket = by_muni.setdefault(muni_id, {
-            "municipality_id": muni_id,
-            "municipality_name": muni_name,
-            "records": [],
-            "field_present": {f: 0 for f in QUALITY_FIELDS},
-        })
-        bucket["records"].append(r)
-        for field in QUALITY_FIELDS:
-            value = getattr(r, field, None)
-            if field == "area_per_salt_bed":
-                if value is not None:
-                    bucket["field_present"][field] += 1
-            else:
-                if value is not None and value != "":
-                    bucket["field_present"][field] += 1
-
-    municipality_scores = []
-    overall_field_present = {f: 0 for f in QUALITY_FIELDS}
-
-    for bucket in by_muni.values():
-        count = len(bucket["records"])
-        completeness = {}
-        score_total = 0.0
-        for field in QUALITY_FIELDS:
-            present = bucket["field_present"][field]
-            rate = (present / count) if count else 0.0
-            completeness[field] = round(rate * 100, 1)
-            score_total += rate * QUALITY_WEIGHTS[field]
-            overall_field_present[field] += present
-        municipality_scores.append({
-            "municipality_id": bucket["municipality_id"],
-            "municipality_name": bucket["municipality_name"],
-            "record_count": count,
-            "completeness": completeness,
-            "quality_score": round(score_total * 100, 1),
-        })
-
-    overall_completeness = {}
-    overall_score = 0.0
-    if total_records:
-        for field in QUALITY_FIELDS:
-            rate = overall_field_present[field] / total_records
-            overall_completeness[field] = round(rate * 100, 1)
-            overall_score += rate * QUALITY_WEIGHTS[field]
-    overall_score = round(overall_score * 100, 1)
-
-    municipality_scores.sort(key=lambda x: x["quality_score"])
-
-    # Reporting completeness grid (shared helper with analytics/descriptive).
-    muni_ids = [m["municipality_id"] for m in municipality_scores]
-    muni_names = {m["municipality_id"]: m["municipality_name"] for m in municipality_scores}
-    grid_labels, reporting_grid = _reporting_grid(muni_ids, muni_names, range_months)
-
-    # Reporting completeness % across all municipalities and months in range.
-    total_cells = len(grid_labels) * len(reporting_grid)
-    reported_cells = sum(
-        1 for row in reporting_grid for mo in row["months"] if mo["reported"]
-    )
-    reporting_completeness_pct = round((reported_cells / total_cells) * 100, 1) if total_cells else 0.0
-
-    # Municipalities with missing months in the last 3 months.
-    recent_labels = grid_labels[-3:]
-    municipalities_missing_recent = [
-        row["municipality_name"]
-        for row in reporting_grid
-        if any(not mo["reported"] for mo in row["months"] if mo["month_label"] in recent_labels)
-    ]
-
-    return jsonify({
-        "overall_quality_score": overall_score,
-        "overall_completeness": overall_completeness,
-        "weights": QUALITY_WEIGHTS,
-        "municipalities": municipality_scores,
-        "total_records": total_records,
-        "pending_validation_count": pending_count,
-        "reporting_grid": reporting_grid,
-        "grid_labels": grid_labels,
-        "range_months": range_months,
-        "reporting_completeness_pct": reporting_completeness_pct,
-        "municipalities_missing_recent": municipalities_missing_recent,
-    })
+    return jsonify(build_data_quality(range_months))
 
 
 @admin_api_bp.route("/insight", methods=["GET"])
