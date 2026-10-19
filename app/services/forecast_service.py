@@ -18,6 +18,7 @@ from app.services.aggregates import (
     _reindex_complete,
     _last_month_with_data,
 )
+from sqlalchemy import func
 
 # Reference epoch for computing real (non-compressed) month positions.
 _EPOCH_YEAR = 2000
@@ -1163,6 +1164,116 @@ def _derive_seasonal_weights(municipality_id: Optional[int]):
     return weights, "data"
 
 
+def _complete_years_with_data(municipality_id: Optional[int] = None) -> List[int]:
+    """Calendar years that have at least 10 months of approved records.
+
+    Same "complete year" convention used for the seasonal weights, so the
+    historical share and the monthly target come from the same population.
+    """
+    labels, _, _ = _monthly_aggregates(municipality_id, date(2000, 1, 1), date.today())
+    counts: dict = {}
+    for lb in labels:
+        y = int(lb[:4])
+        counts[y] = counts.get(y, 0) + 1
+    return sorted(y for y, c in counts.items() if c >= 10)
+
+
+def _approved_production_by_municipality(years: List[int]) -> dict:
+    """Approved production per municipality over the given complete years."""
+    if not years:
+        return {}
+    start = date(min(years), 1, 1)
+    end = date(max(years), 12, 31)
+    rows = (
+        db.session.query(
+            ProductionRecord.municipality_id,
+            func.sum(ProductionRecord.production_volume_mt).label("v"),
+        )
+        .filter(ProductionRecord.status == "approved")
+        .filter(ProductionRecord.record_date >= start)
+        .filter(ProductionRecord.record_date <= end)
+        .group_by(ProductionRecord.municipality_id)
+        .all()
+    )
+    return {r.municipality_id: float(r.v or 0) for r in rows}
+
+
+def _municipality_target_breakdown(
+    annual_target: float,
+    weights: List[float],
+    horizon: int,
+) -> List[dict]:
+    """Per-municipality forecast against its historical-share target share.
+
+    Read-only: it reads the newest EXISTING run of every municipality and
+    never creates a run. A municipality whose newest run covers fewer than 12
+    forecast months is compared only against the target share of the same
+    months, and is flagged with "months_covered". A municipality without any
+    forecast run comes back with forecast_mt = None ("No data"), never zero.
+    """
+    municipalities = Municipality.query.filter_by(status="active").order_by(Municipality.name).all()
+    if not municipalities:
+        return []
+
+    # 1) Newest existing run per municipality (no new runs are created).
+    latest_run_id: dict = {}
+    for run in (
+        ForecastRun.query.filter(ForecastRun.municipality_id.isnot(None))
+        .order_by(ForecastRun.created_at.desc())
+        .all()
+    ):
+        if run.municipality_id not in latest_run_id:
+            latest_run_id[run.municipality_id] = run.id
+
+    # 2) Forecast points of those runs, in one query.
+    points_by_run: dict = {}
+    if latest_run_id:
+        points = (
+            db.session.query(ForecastPoint)
+            .filter(ForecastPoint.run_id.in_(list(latest_run_id.values())))
+            .filter(ForecastPoint.is_forecast.is_(True))
+            .all()
+        )
+        for p in points:
+            points_by_run.setdefault(p.run_id, []).append(p)
+
+    # 3) Historical share of approved production over the complete years.
+    complete_years = _complete_years_with_data(None)
+    historical = _approved_production_by_municipality(complete_years)
+    historical_total = sum(historical.values())
+
+    rows = []
+    for m in municipalities:
+        run_id = latest_run_id.get(m.id)
+        pts = sorted(points_by_run.get(run_id, []), key=lambda p: p.period_label)[:horizon]
+        hist_mt = historical.get(m.id, 0.0)
+        share = (hist_mt / historical_total) if historical_total > 0 else 0.0
+        entry = {
+            "municipality_id": m.id,
+            "name": m.name,
+            "historical_share": share,
+            "historical_mt": hist_mt,
+            "months_covered": 0,
+            "forecast_mt": None,
+            "target_share_mt": None,
+            "months_label": None,
+        }
+        if pts:
+            covered_months = []
+            for p in pts:
+                try:
+                    covered_months.append(int(p.period_label[5:7]))
+                except (ValueError, IndexError):
+                    continue
+            covered_weight = sum(weights[mth - 1] for mth in covered_months if 1 <= mth <= 12)
+            entry["months_covered"] = len(pts)
+            entry["forecast_mt"] = float(sum(float(p.predicted_value or 0) for p in pts))
+            entry["target_share_mt"] = annual_target * share * covered_weight
+            entry["months_label"] = f"{len(pts)} of 12 months"
+        rows.append(entry)
+    return rows
+
+
 def evaluate_target(
     municipality_id: Optional[int],
     annual_target: float,
@@ -1195,6 +1306,8 @@ def evaluate_target(
 
     forecast_labels = []
     forecast_values = []
+    forecast_lower = []
+    forecast_upper = []
     if municipality_id is not None:
         latest_run = (
             ForecastRun.query.filter_by(municipality_id=municipality_id)
@@ -1214,6 +1327,15 @@ def evaluate_target(
         forecast_labels = [p.period_label for p in forecast_points[:forecast_horizon]]
         # Real forecast points only — never pad with zeros.
         forecast_values = [float(p.predicted_value or 0) for p in forecast_points[:forecast_horizon]]
+        # Expected range per month, straight from the stored run.
+        forecast_lower = [
+            (float(p.lower_bound) if p.lower_bound is not None else None)
+            for p in forecast_points[:forecast_horizon]
+        ]
+        forecast_upper = [
+            (float(p.upper_bound) if p.upper_bound is not None else None)
+            for p in forecast_points[:forecast_horizon]
+        ]
 
     shortfall_months = max(0, forecast_horizon - len(forecast_values))
     effective_horizon = len(forecast_values)
@@ -1325,6 +1447,41 @@ def evaluate_target(
         scope_note = "province-wide"
     scope_intro = f"This evaluation is {scope_note}."
 
+    # --- Evaluation year (never hardcoded) ---------------------------------
+    # The calendar year of the latest approved record for this scope. The
+    # year-end projection is the approved records so far plus the forecast for
+    # the remaining months of that same year.
+    last_record_month = _last_month_with_data(municipality_id)
+    evaluation_year = int(last_record_month[:4]) if last_record_month else date.today().year
+    months_remaining_in_year = (12 - int(last_record_month[5:7])) if last_record_month else 0
+
+    # Approved records so far in the evaluation year, by month.
+    ytd_labels, ytd_values, _ = _monthly_aggregates(
+        municipality_id, date(evaluation_year, 1, 1), date(evaluation_year, 12, 31)
+    )
+    ytd_approved = [
+        {"month": lb, "total_mt": float(v)} for lb, v in zip(ytd_labels, ytd_values)
+    ]
+    ytd_approved_total = float(sum(r["total_mt"] for r in ytd_approved))
+
+    # Forecast months that fall inside the evaluation year, and the share of
+    # the annual target those months carry.
+    in_year_indices = [
+        i for i, lb in enumerate(forecast_labels) if int(lb[:4]) == evaluation_year
+    ]
+    forecast_months_in_year = len(in_year_indices)
+    target_for_forecast_months = float(sum(monthly_targets[i] for i in in_year_indices))
+    forecast_total_in_year = float(sum(forecast_values[i] for i in in_year_indices))
+    forecast_lower_in_year = float(sum(forecast_lower[i] for i in in_year_indices if forecast_lower[i] is not None))
+    forecast_upper_in_year = float(sum(forecast_upper[i] for i in in_year_indices if forecast_upper[i] is not None))
+
+    # Per-municipality breakdown (province scope only), read-only.
+    municipality_breakdown = []
+    if municipality_id is None:
+        municipality_breakdown = _municipality_target_breakdown(
+            float(annual_target), list(raw_weights), forecast_horizon
+        )
+
     sign = "+" if variance >= 0 else ""
     narrative = (
         f"{scope_intro} {monthly_avg_note} "
@@ -1343,6 +1500,19 @@ def evaluate_target(
         "forecast_labels": forecast_labels,
         "monthly_targets": [float(t) for t in monthly_targets],
         "monthly_forecasts": [float(v) for v in forecast_values],
+        "forecast_lower": [float(v) if v is not None else None for v in forecast_lower],
+        "forecast_upper": [float(v) if v is not None else None for v in forecast_upper],
+        "evaluation_year": evaluation_year,
+        "last_record_month": last_record_month,
+        "months_remaining_in_year": months_remaining_in_year,
+        "forecast_months_in_year": forecast_months_in_year,
+        "target_for_forecast_months": target_for_forecast_months,
+        "forecast_total_in_year": forecast_total_in_year,
+        "forecast_lower_in_year": forecast_lower_in_year,
+        "forecast_upper_in_year": forecast_upper_in_year,
+        "ytd_approved": ytd_approved,
+        "ytd_approved_total": ytd_approved_total,
+        "municipality_breakdown": municipality_breakdown,
         "total_target": float(total_target),
         "total_projected": float(total_projected),
         "variance": float(variance),
@@ -1358,6 +1528,9 @@ def evaluate_target(
         "recommendations": recommendations,
         "narrative": narrative,
         "weights": [float(w) for w in month_weights],
+        # The raw 12 calendar-month shares (index 0 = January), so a caller can
+        # build a full-year target path even when the horizon is short.
+        "seasonal_weights": [float(w) for w in raw_weights],
         "weights_source": weights_source,
         "target_basis": target_basis,
     }

@@ -228,12 +228,14 @@ export function getAdminSupplyDemand() {
   return api('/admin/supply-demand');
 }
 
-export function getAdminTrends() {
-  return api('/admin/trends');
+export function getAdminTrends(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return api(`/admin/trends${qs ? `?${qs}` : ''}`);
 }
 
-export function getAdminDescriptive() {
-  return api('/admin/analytics/descriptive');
+export function getAdminDescriptive(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return api(`/admin/analytics/descriptive${qs ? `?${qs}` : ''}`);
 }
 
 export function getAdminPredictive() {

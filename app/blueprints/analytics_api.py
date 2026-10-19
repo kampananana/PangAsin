@@ -25,7 +25,7 @@ from app.services.aggregates import (
 )
 from app.utils import _admin_only, _parse_date
 from datetime import date, timedelta
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, case
 
 analytics_api_bp = Blueprint("analytics_api", __name__, url_prefix="/api/admin/analytics")
 
@@ -53,7 +53,7 @@ def _add_months(source_date, months):
     return date(year, month + 1, 1) - timedelta(days=1)
 
 
-def _query_records(municipality_id, start=None, end=None):
+def _query_records(municipality_id, start=None, end=None, production_method=None):
     q = ProductionRecord.query.filter(ProductionRecord.status == "approved")
     if municipality_id is not None:
         q = q.filter(ProductionRecord.municipality_id == municipality_id)
@@ -61,16 +61,64 @@ def _query_records(municipality_id, start=None, end=None):
         q = q.filter(ProductionRecord.record_date >= start)
     if end is not None:
         q = q.filter(ProductionRecord.record_date <= end)
+    if production_method:
+        q = q.filter(ProductionRecord.production_method == production_method)
     return q
 
 
-def _monthly_series(municipality_id, start, end):
-    """List of {month, total_mt} for approved records in [start, end]."""
-    labels, values, _ = _monthly_aggregates(municipality_id, start, end)
+def _monthly_series(municipality_id, start, end, production_method=None):
+    """List of {month, total_mt} for approved records in [start, end].
+
+    With a production_method filter the aggregation is done here so the
+    monthly series matches the method the admin selected. Without a filter it
+    reuses the shared _monthly_aggregates helper unchanged.
+    """
+    if not production_method:
+        labels, values, _ = _monthly_aggregates(municipality_id, start, end)
+        return [
+            {"month": labels[i], "total_mt": round(values[i], 3)}
+            for i in range(len(labels))
+        ]
+    rows = (
+        _query_records(municipality_id, start, end, production_method)
+        .with_entities(
+            func.to_char(ProductionRecord.record_date, "YYYY-MM").label("m"),
+            func.coalesce(func.sum(ProductionRecord.production_volume_mt), 0).label("v"),
+        )
+        .group_by(func.to_char(ProductionRecord.record_date, "YYYY-MM"))
+        .order_by(func.to_char(ProductionRecord.record_date, "YYYY-MM"))
+        .all()
+    )
     return [
-        {"month": labels[i], "total_mt": round(values[i], 3)}
-        for i in range(len(labels))
+        {"month": r.m, "total_mt": round(float(r.v or 0), 3)}
+        for r in rows
     ]
+
+
+def _month_start_offset(base: date, months: int) -> date:
+    """First day of the month `months` away from the first day of `base`'s month."""
+    m = base.month - 1 + months
+    y = base.year + m // 12
+    m = m % 12 + 1
+    return date(y, m, 1)
+
+
+def _all_monthly_labels_values(municipality_id, end, production_method=None):
+    """(labels, values) of approved production by month, 2000-01 up to `end`."""
+    if not production_method:
+        labels, values, _ = _monthly_aggregates(municipality_id, date(2000, 1, 1), end)
+        return labels, values
+    rows = (
+        _query_records(municipality_id, date(2000, 1, 1), end, production_method)
+        .with_entities(
+            func.to_char(ProductionRecord.record_date, "YYYY-MM").label("m"),
+            func.coalesce(func.sum(ProductionRecord.production_volume_mt), 0).label("v"),
+        )
+        .group_by(func.to_char(ProductionRecord.record_date, "YYYY-MM"))
+        .order_by(func.to_char(ProductionRecord.record_date, "YYYY-MM"))
+        .all()
+    )
+    return [r.m for r in rows], [float(r.v or 0) for r in rows]
 
 
 def _complete_years(labels):
@@ -98,36 +146,53 @@ def descriptive():
     (MT); producers counts; methods share (MT); yield_per_bed_mt (MT/bed) and
     yield_per_ha_mt (MT/ha); reporting_grid (boolean per municipality/month).
 
-    Query: municipality_id (optional, defaults to all 7 municipalities).
+    Query: municipality_id (optional, defaults to all 7 municipalities),
+           months (optional, how many calendar months of monthly history to
+           return; default 24, max 120),
+           production_method (optional solar|cooked|hybrid; narrows every
+           approved-record query in this response).
     """
     if _admin_only():
         return jsonify({"error": "Admin access only."}), 403
 
     municipality_id = request.args.get("municipality_id", type=int)
+    months = request.args.get("months", type=int) or 24
+    months = max(1, min(120, months))
+    production_method = request.args.get("production_method") or None
 
     today = date.today()
     this_year = today.year
     last_year = this_year - 1
 
-    # Approved records overall for KPI scope.
-    q_all = _query_records(municipality_id)
-    total_recorded = q_all.with_entities(func.coalesce(func.sum(ProductionRecord.production_volume_mt), 0)).scalar() or 0
-
-    # This year / last year.
-    this_year_mt = (
-        _query_records(municipality_id, date(this_year, 1, 1), date(this_year, 12, 31))
-        .with_entities(func.coalesce(func.sum(ProductionRecord.production_volume_mt), 0)).scalar() or 0
+    # Approved records overall for KPI scope. All-time, this year and last year
+    # come from ONE query: the database is remote, so every extra round trip
+    # costs real page-load time.
+    totals_row = (
+        _query_records(municipality_id, production_method=production_method)
+        .with_entities(
+            func.coalesce(func.sum(ProductionRecord.production_volume_mt), 0).label("total"),
+            func.coalesce(func.sum(case(
+                (ProductionRecord.record_date.between(date(this_year, 1, 1), date(this_year, 12, 31)),
+                 ProductionRecord.production_volume_mt),
+                else_=0,
+            )), 0).label("this_year"),
+            func.coalesce(func.sum(case(
+                (ProductionRecord.record_date.between(date(last_year, 1, 1), date(last_year, 12, 31)),
+                 ProductionRecord.production_volume_mt),
+                else_=0,
+            )), 0).label("last_year"),
+        )
+        .one()
     )
-    last_year_mt = (
-        _query_records(municipality_id, date(last_year, 1, 1), date(last_year, 12, 31))
-        .with_entities(func.coalesce(func.sum(ProductionRecord.production_volume_mt), 0)).scalar() or 0
-    )
+    total_recorded = totals_row.total
+    this_year_mt = totals_row.this_year
+    last_year_mt = totals_row.last_year
     yoy_change_pct = None
     if last_year_mt:
         yoy_change_pct = round(((this_year_mt - last_year_mt) / last_year_mt) * 100, 1)
 
     # Best month (all time, by month total).
-    labels, values, _ = _monthly_aggregates(municipality_id, date(2000, 1, 1), today)
+    labels, values = _all_monthly_labels_values(municipality_id, today, production_method)
     best_month = None
     if values:
         best_idx = max(range(len(values)), key=lambda i: values[i])
@@ -146,6 +211,8 @@ def descriptive():
     )
     if municipality_id is not None:
         muni_rows = muni_rows.filter(ProductionRecord.municipality_id == municipality_id)
+    if production_method:
+        muni_rows = muni_rows.filter(ProductionRecord.production_method == production_method)
     muni_rows = muni_rows.group_by(ProductionRecord.municipality_id, Municipality.name).all()
 
     by_municipality = []
@@ -164,17 +231,20 @@ def descriptive():
     municipalities_reporting = len(by_municipality)
 
     # Latest record month.
-    latest_row = _query_records(municipality_id).order_by(ProductionRecord.record_date.desc()).first()
+    latest_row = (
+        _query_records(municipality_id, production_method=production_method)
+        .order_by(ProductionRecord.record_date.desc()).first()
+    )
     latest_record_month = None
     if latest_row:
         latest_record_month = f"{latest_row.record_date.year:04d}-{latest_row.record_date.month:02d}"
 
-    # Monthly series (last 24 months by default; full range if small).
-    series_start = date(today.year - 2, today.month, 1)
-    monthly_series = _monthly_series(municipality_id, series_start, today)
+    # Monthly series: the last `months` calendar months (default 24).
+    series_start = _month_start_offset(date(today.year, today.month, 1), -(months - 1))
+    monthly_series = _monthly_series(municipality_id, series_start, today, production_method)
 
     # Yearly overlay {year: [12 values]} over complete years.
-    all_labels, all_values, _ = _monthly_aggregates(municipality_id, date(2000, 1, 1), today)
+    all_labels, all_values = labels, values
     complete_years = sorted(_complete_years(all_labels))
     yearly_overlay = {}
     month_totals = {m: 0.0 for m in range(1, 13)}
@@ -201,24 +271,35 @@ def descriptive():
                 "avg_mt": round(month_totals[m] / month_counts[m], 3),
             })
 
-    # Producers: by municipality, gender split, age buckets (from approved records).
-    # ProductionRecord carries registered/male/female and age bucket counts per record.
+    # Producers + yield per municipality, in ONE grouped query.
+    # ProductionRecord carries registered/male/female and age bucket counts per
+    # record. Doing it grouped avoids two extra round trips per municipality.
+    agg_rows = (
+        _query_records(municipality_id, production_method=production_method)
+        .with_entities(
+            ProductionRecord.municipality_id,
+            func.coalesce(func.sum(ProductionRecord.registered_producers), 0).label("registered"),
+            func.coalesce(func.sum(ProductionRecord.male_producers), 0).label("male"),
+            func.coalesce(func.sum(ProductionRecord.female_producers), 0).label("female"),
+            *[func.coalesce(func.sum(getattr(ProductionRecord, f)), 0).label(f) for f in [
+                "producers_18_30", "producers_31_40", "producers_41_50",
+                "producers_51_60", "producers_61_plus",
+            ]],
+            func.coalesce(func.sum(ProductionRecord.production_volume_mt), 0).label("volume"),
+            func.coalesce(func.sum(ProductionRecord.num_salt_beds), 0).label("beds"),
+            func.coalesce(func.sum(ProductionRecord.num_salt_beds * ProductionRecord.area_per_salt_bed), 0).label("area_m2"),
+        )
+        .group_by(ProductionRecord.municipality_id)
+        .all()
+    )
+    agg_by_muni = {r.municipality_id: r for r in agg_rows}
+
     producers_by_municipality = []
     for r in muni_rows:
         muni_id = r.municipality_id
-        agg = (
-            _query_records(muni_id)
-            .with_entities(
-                func.coalesce(func.sum(ProductionRecord.registered_producers), 0).label("registered"),
-                func.coalesce(func.sum(ProductionRecord.male_producers), 0).label("male"),
-                func.coalesce(func.sum(ProductionRecord.female_producers), 0).label("female"),
-                *[func.coalesce(func.sum(getattr(ProductionRecord, f)), 0).label(f) for f in [
-                    "producers_18_30", "producers_31_40", "producers_41_50",
-                    "producers_51_60", "producers_61_plus",
-                ]],
-            )
-            .first()
-        )
+        agg = agg_by_muni.get(muni_id)
+        if agg is None:
+            continue
         producers_by_municipality.append({
             "municipality_id": muni_id,
             "municipality_name": r.name,
@@ -226,11 +307,11 @@ def descriptive():
             "male_producers": int(agg.male or 0),
             "female_producers": int(agg.female or 0),
             "age_buckets": {
-                "18-30": int(getattr(agg, "producers_18_30") or 0),
-                "31-40": int(getattr(agg, "producers_31_40") or 0),
-                "41-50": int(getattr(agg, "producers_41_50") or 0),
-                "51-60": int(getattr(agg, "producers_51_60") or 0),
-                "61+": int(getattr(agg, "producers_61_plus") or 0),
+                "18-30": int(agg.producers_18_30 or 0),
+                "31-40": int(agg.producers_31_40 or 0),
+                "41-50": int(agg.producers_41_50 or 0),
+                "51-60": int(agg.producers_51_60 or 0),
+                "61+": int(agg.producers_61_plus or 0),
             },
         })
 
@@ -259,15 +340,9 @@ def descriptive():
     yield_by_municipality = []
     for r in muni_rows:
         muni_id = r.municipality_id
-        agg = (
-            _query_records(muni_id)
-            .with_entities(
-                func.coalesce(func.sum(ProductionRecord.production_volume_mt), 0).label("volume"),
-                func.coalesce(func.sum(ProductionRecord.num_salt_beds), 0).label("beds"),
-                func.coalesce(func.sum(ProductionRecord.num_salt_beds * ProductionRecord.area_per_salt_bed), 0).label("area_m2"),
-            )
-            .first()
-        )
+        agg = agg_by_muni.get(muni_id)
+        if agg is None:
+            continue
         volume = float(agg.volume or 0)
         beds = int(agg.beds or 0)
         area_m2 = float(agg.area_m2 or 0)
@@ -292,8 +367,38 @@ def descriptive():
         range_months=36,
     )
 
+    # History coverage: how many distinct calendar months actually carry
+    # approved records, per municipality and for the whole province. This is
+    # the basis of the Data Readiness KPI, so it counts real reporting months
+    # and never treats a missing month as zero production.
+    history_rows = (
+        _query_records(None, production_method=production_method)
+        .with_entities(
+            ProductionRecord.municipality_id,
+            func.to_char(ProductionRecord.record_date, "YYYY-MM").label("m"),
+        )
+        .distinct()
+        .all()
+    )
+    municipality_months = {}
+    province_months = set()
+    for r in history_rows:
+        municipality_months.setdefault(r.municipality_id, set()).add(r.m)
+        province_months.add(r.m)
+    active_total = Municipality.query.filter_by(status="active").count()
+    history = {
+        "months_with_data": len(province_months),
+        "municipalities_with_data": len([s for s in municipality_months.values() if s]),
+        "municipalities_total": active_total,
+        "municipality_months": {str(k): len(v) for k, v in municipality_months.items()},
+    }
+
     return jsonify({
         "scope": "all_municipalities" if municipality_id is None else municipality_id,
+        "filters": {
+            "months": months,
+            "production_method": production_method,
+        },
         "kpis": {
             "total_recorded_mt": round(float(total_recorded), 3),
             "this_year_mt": round(float(this_year_mt), 3),
@@ -303,6 +408,7 @@ def descriptive():
             "municipalities_reporting": municipalities_reporting,
             "latest_record_month": latest_record_month,
         },
+        "history": history,
         "monthly_series": monthly_series,
         "yearly_overlay": yearly_overlay,
         "by_municipality": by_municipality,

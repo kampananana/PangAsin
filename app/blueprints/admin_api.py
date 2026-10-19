@@ -14,7 +14,6 @@ from app.models.demand_benchmark import DemandBenchmark
 from app.extensions import db
 from datetime import datetime, date, timedelta
 from sqlalchemy import func
-from app.services.forecast_service import _monthly_aggregates
 from app.services.aggregates import _reporting_grid
 from app.constants import AGE_BUCKET_FIELDS, QUALITY_FIELDS, QUALITY_WEIGHTS, SECTOR_DEMAND, SECTOR_DEMAND_NOTE
 from app.utils import _admin_only, _parse_date
@@ -666,6 +665,81 @@ def stats():
             "by_barangay": by_barangay_by_muni.get(municipality_id, []),
         })
 
+    # --- Master list of producers (the real registry) -----------------------
+    # WHY: the production records carry a per-record "registered producers"
+    #      head-count, so summing it over every month counts the same people
+    #      again and again. The master list holds the distinct producers, so
+    #      the producer panels are driven by it.
+    AGE_BANDS = ("18-30", "31-40", "41-50", "51-60", "61+")
+    master_by_muni = {}
+    master_rows = (
+        db.session.query(Barangay.municipality_id, Producer.age, Producer.sex)
+        .join(Producer, Producer.barangay_id == Barangay.id)
+        .all()
+    )
+    for municipality_id, age, sex in master_rows:
+        bucket = master_by_muni.setdefault(municipality_id, {
+            "producers": 0,
+            "age_bands": {band: 0 for band in AGE_BANDS},
+            "sex": {"male": 0, "female": 0, "other": 0},
+        })
+        bucket["producers"] += 1
+        if age is not None:
+            if age <= 30:
+                bucket["age_bands"]["18-30"] += 1
+            elif age <= 40:
+                bucket["age_bands"]["31-40"] += 1
+            elif age <= 50:
+                bucket["age_bands"]["41-50"] += 1
+            elif age <= 60:
+                bucket["age_bands"]["51-60"] += 1
+            else:
+                bucket["age_bands"]["61+"] += 1
+        bucket["sex"][{"Male": "male", "Female": "female"}.get(sex, "other")] += 1
+
+    municipality_names = {m.id: m.name for m in Municipality.query.filter_by(status="active").all()}
+    master_list_by_municipality = [
+        {
+            "municipality_id": municipality_id,
+            "municipality_name": municipality_names.get(municipality_id, "Unknown"),
+            "producers": bucket["producers"],
+            "age_bands": bucket["age_bands"],
+            "sex": bucket["sex"],
+        }
+        for municipality_id, bucket in sorted(
+            master_by_muni.items(), key=lambda item: municipality_names.get(item[0], "").lower()
+        )
+    ]
+
+    # --- Production method split over ALL approved records -----------------
+    # WHY: the panel sits next to all-time tables, so it must use the same
+    #      period instead of the public dashboard's rolling 12 months.
+    method_rows = (
+        db.session.query(
+            ProductionRecord.municipality_id,
+            ProductionRecord.production_method,
+            func.sum(ProductionRecord.production_volume_mt).label("mt"),
+        )
+        .filter(ProductionRecord.status == "approved")
+        .group_by(ProductionRecord.municipality_id, ProductionRecord.production_method)
+        .all()
+    )
+    methods_by_muni = {}
+    for municipality_id, method, mt in method_rows:
+        bucket = methods_by_muni.setdefault(municipality_id, {"solar": 0.0, "cooked": 0.0, "hybrid": 0.0})
+        if method in bucket:
+            bucket[method] = round(float(mt or 0), 3)
+    production_methods_mt = [
+        {
+            "municipality_id": municipality_id,
+            "municipality_name": municipality_names.get(municipality_id, "Unknown"),
+            **bucket,
+        }
+        for municipality_id, bucket in sorted(
+            methods_by_muni.items(), key=lambda item: municipality_names.get(item[0], "").lower()
+        )
+    ]
+
     return jsonify({
         "total_volume_mt": float(total_volume),
         "total_area_sqm": float(total_area or 0),
@@ -674,6 +748,8 @@ def stats():
         "total_registered_producers": int(total_registered or 0),
         "pending_validation_count": pending_validation_count,
         "by_municipality": municipality_stats,
+        "master_list_by_municipality": master_list_by_municipality,
+        "production_methods_mt": production_methods_mt,
         "environment_by_municipality": sorted(
             environment_by_muni.values(), key=lambda item: item["municipality_name"].lower(),
         ),
@@ -893,135 +969,166 @@ def admin_months():
     return jsonify({"months": months})
 
 
+def _shift_month(ym: str, delta: int) -> str:
+    """Shift a 'YYYY-MM' label by `delta` calendar months."""
+    y = int(ym[:4])
+    m = int(ym[5:7]) + delta
+    while m > 12:
+        m -= 12
+        y += 1
+    while m < 1:
+        m += 12
+        y -= 1
+    return f"{y:04d}-{m:02d}"
+
+
+def _month_block(end_ym: str, count: int) -> list:
+    """The `count` calendar months ending with (and including) `end_ym`."""
+    out = []
+    for _ in range(count):
+        out.append(end_ym)
+        end_ym = _shift_month(end_ym, -1)
+    out.reverse()
+    return out
+
+
+def _month_bounds(ym: str):
+    """(first day, last day) of the calendar month 'YYYY-MM'."""
+    y = int(ym[:4])
+    m = int(ym[5:7])
+    start = date(y, m, 1)
+    end = date(y + 1, 1, 1) - timedelta(days=1) if m == 12 else date(y, m + 1, 1) - timedelta(days=1)
+    return start, end
+
+
+def _approved_month_totals(months, production_method=None):
+    """Approved production grouped by month and municipality.
+
+    Returns (per_municipality, province) where each is {month_ym: total_mt}.
+    Months without any approved record are simply absent from the maps, so a
+    missing month is never silently treated as zero production.
+    """
+    start, _ = _month_bounds(months[0])
+    _, end = _month_bounds(months[-1])
+    q = (
+        db.session.query(
+            ProductionRecord.municipality_id,
+            func.to_char(ProductionRecord.record_date, "YYYY-MM").label("m"),
+            func.sum(ProductionRecord.production_volume_mt).label("v"),
+        )
+        .filter(ProductionRecord.status == "approved")
+        .filter(ProductionRecord.record_date >= start)
+        .filter(ProductionRecord.record_date <= end)
+    )
+    if production_method:
+        q = q.filter(ProductionRecord.production_method == production_method)
+    rows = (
+        q.group_by(
+            ProductionRecord.municipality_id,
+            func.to_char(ProductionRecord.record_date, "YYYY-MM"),
+        )
+        .all()
+    )
+    per_muni = {}
+    province = {}
+    for r in rows:
+        value = float(r.v or 0)
+        per_muni.setdefault(r.municipality_id, {})[r.m] = value
+        province[r.m] = province.get(r.m, 0.0) + value
+    return per_muni, province
+
+
 @admin_api_bp.route("/trends", methods=["GET"])
 @login_required
 def trends():
+    """Year-over-year comparison of approved production records.
+
+    Compares TWO COMPLETE 12-month calendar blocks: the 12 months ending on
+    the latest month that has approved records ("current") and the 12 months
+    before it ("previous"). Windows use calendar month boundaries, never
+    365-day offsets, so both blocks always cover the same 12 calendar months.
+
+    A municipality is reported as "incomplete" when any month in either block
+    has no approved record; no percentage is returned for it, because the
+    missing month cannot be assumed to be zero production. Every active
+    municipality is always returned, so the caller can show all seven.
+
+    Query: month (optional 'YYYY-MM' anchor for the current block),
+           production_method (optional solar|cooked|hybrid filter).
+    """
     if _admin_only():
         return jsonify({"error": "Admin access only."}), 403
 
-    month = request.args.get("month")
+    production_method = request.args.get("production_method") or None
     latest = (
         db.session.query(func.max(ProductionRecord.record_date))
         .filter(ProductionRecord.status == "approved")
         .scalar()
     )
     if latest is None:
-        return jsonify({"trend": [], "municipalities": [], "period": None})
+        return jsonify({"trend": [], "municipalities": [], "period": None, "totals": None})
 
-    if month:
+    anchor = request.args.get("month")
+    if anchor:
         try:
-            month_start = datetime.strptime(month, "%Y-%m").date()
-            if month_start.month == 12:
-                month_end = date(month_start.year + 1, 1, 1)
-            else:
-                month_end = date(month_start.year, month_start.month + 1, 1)
+            datetime.strptime(anchor, "%Y-%m")
         except (TypeError, ValueError):
             return jsonify({"error": "month must be in YYYY-MM format."}), 400
-        labels, values, _ = _monthly_aggregates(None, month_start, month_end - timedelta(days=1))
-        trend = [
-            {"month": labels[i], "total": round(values[i], 3)}
-            for i in range(len(labels))
-        ]
-        by_muni = (
-            db.session.query(
-                Municipality.id,
-                Municipality.name,
-                func.sum(ProductionRecord.production_volume_mt).label("v"),
-            )
-            .join(ProductionRecord, ProductionRecord.municipality_id == Municipality.id)
-            .filter(ProductionRecord.status == "approved")
-            .filter(ProductionRecord.record_date >= month_start)
-            .filter(ProductionRecord.record_date < month_end)
-            .group_by(Municipality.id, Municipality.name)
-            .all()
-        )
-        by_muni_prev = (
-            db.session.query(
-                Municipality.id,
-                func.sum(ProductionRecord.production_volume_mt).label("v"),
-            )
-            .join(ProductionRecord, ProductionRecord.municipality_id == Municipality.id)
-            .filter(ProductionRecord.status == "approved")
-            .filter(ProductionRecord.record_date >= month_start - timedelta(days=365))
-            .filter(ProductionRecord.record_date < month_start)
-            .group_by(Municipality.id)
-            .all()
-        )
-        prev_map = {r.id: float(r.v or 0) for r in by_muni_prev}
-        municipalities = []
-        for r in by_muni:
-            current_mt = round(float(r.v or 0), 3)
-            previous_mt = round(prev_map.get(r.id, 0), 3)
-            change_pct = None
-            if previous_mt:
-                change_pct = round(((current_mt - previous_mt) / previous_mt) * 100, 1)
-            municipalities.append({
-                "name": r.name,
-                "current": current_mt,
-                "previous": previous_mt,
-                "changePct": change_pct,
-            })
-        municipalities.sort(key=lambda x: x["current"], reverse=True)
-        return jsonify({
-            "trend": trend,
-            "municipalities": municipalities,
-            "period": {"start": month_start.isoformat(), "end": (month_end - timedelta(days=1)).isoformat()},
-        })
+        anchor_ym = anchor
+    else:
+        anchor_ym = f"{latest.year:04d}-{latest.month:02d}"
 
-    end = latest
-    start = end - timedelta(days=365)
-
-    labels, values, _ = _monthly_aggregates(None, start, end)
-    trend = [
-        {"month": labels[i], "total": round(values[i], 3)}
-        for i in range(len(labels))
-    ]
-
-    by_muni = (
-        db.session.query(
-            Municipality.id,
-            Municipality.name,
-            func.sum(ProductionRecord.production_volume_mt).label("v"),
-        )
-        .join(ProductionRecord, ProductionRecord.municipality_id == Municipality.id)
-        .filter(ProductionRecord.status == "approved")
-        .filter(ProductionRecord.record_date >= start)
-        .filter(ProductionRecord.record_date <= end)
-        .group_by(Municipality.id, Municipality.name)
-        .all()
+    current_months = _month_block(anchor_ym, 12)
+    previous_months = _month_block(_shift_month(current_months[0], -1), 12)
+    per_muni, province = _approved_month_totals(
+        sorted(set(current_months + previous_months)), production_method
     )
-    by_muni_prev = (
-        db.session.query(
-            Municipality.id,
-            func.sum(ProductionRecord.production_volume_mt).label("v"),
-        )
-        .join(ProductionRecord, ProductionRecord.municipality_id == Municipality.id)
-        .filter(ProductionRecord.status == "approved")
-        .filter(ProductionRecord.record_date >= start - timedelta(days=365))
-        .filter(ProductionRecord.record_date < start)
-        .group_by(Municipality.id)
-        .all()
-    )
-    prev_map = {r.id: float(r.v or 0) for r in by_muni_prev}
 
     municipalities = []
-    for r in by_muni:
-        current_mt = round(float(r.v or 0), 3)
-        previous_mt = round(prev_map.get(r.id, 0), 3)
+    for m in Municipality.query.filter_by(status="active").order_by(Municipality.name).all():
+        per = per_muni.get(m.id, {})
+        current_mt = round(sum(per.get(lb, 0.0) for lb in current_months), 3)
+        previous_mt = round(sum(per.get(lb, 0.0) for lb in previous_months), 3)
+        missing_current = sum(1 for lb in current_months if lb not in per)
+        missing_previous = sum(1 for lb in previous_months if lb not in per)
+        complete = missing_current == 0 and missing_previous == 0
         change_pct = None
-        if previous_mt:
+        if complete and previous_mt:
             change_pct = round(((current_mt - previous_mt) / previous_mt) * 100, 1)
         municipalities.append({
-            "name": r.name,
+            "municipality_id": m.id,
+            "name": m.name,
             "current": current_mt,
             "previous": previous_mt,
             "changePct": change_pct,
+            "status": "complete" if complete else "incomplete",
+            "missing_current_months": missing_current,
+            "missing_previous_months": missing_previous,
         })
 
-    municipalities.sort(key=lambda x: x["current"], reverse=True)
+    current_total = round(sum(province.get(lb, 0.0) for lb in current_months), 3)
+    previous_total = round(sum(province.get(lb, 0.0) for lb in previous_months), 3)
+    totals = {
+        "current": current_total,
+        "previous": previous_total,
+        "changePct": round(((current_total - previous_total) / previous_total) * 100, 1) if previous_total else None,
+        "current_months": current_months[0],
+        "previous_months": previous_months[0],
+    }
+
+    trend = [
+        {"month": lb, "total": round(province[lb], 3) if lb in province else None}
+        for lb in current_months
+    ]
 
     return jsonify({
         "trend": trend,
         "municipalities": municipalities,
-        "period": {"start": start.isoformat(), "end": end.isoformat()},
+        "totals": totals,
+        "period": {
+            "start": current_months[0],
+            "end": current_months[-1],
+            "previous_start": previous_months[0],
+            "previous_end": previous_months[-1],
+        },
     })

@@ -1,6 +1,6 @@
 import React from 'react';
 import AdminDashboard from './AdminDashboard';
-import MunicipalityAnalytics from './MunicipalityAnalytics';
+import MunicipalityAnalytics from './municipality/MunicipalityAnalytics';
 import SupplyDemandAnalytics from './SupplyDemandAnalytics';
 
 export default function AdminPage({ user }) {

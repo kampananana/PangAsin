@@ -1,0 +1,360 @@
+/* WHAT: Styles for the Municipality Analytics section of the Admin Dashboard.
+   WHY: Scoped to .muni-page and kept in its own file, so the shared index.css
+        and the other admin pages are never touched. Same visual language as
+        the Forecast and Target Evaluation pages. */
+
+.muni-page {
+  --muni-navy: #0C2340;
+  --muni-ocean: #1565C8;
+  --muni-gold: #F09A28;
+  --muni-green: #29B039;
+  --muni-soft-slate: #E7ECF2;
+  --muni-nodata-edge: #A9B4C2;
+  --muni-grid: #E9ECEF;
+  --muni-axis: #8A98A8;
+  --muni-text: #111827;
+  --muni-text-2: #4B5563;
+  --muni-muted: #8A94A3;
+  --muni-hover: rgba(12, 35, 64, 0.045);
+  --muni-border: #E7EAEF;
+  --muni-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  max-width: 1280px;
+}
+
+.muni-page h1, .muni-page h2, .muni-page h3,
+.muni-page h4, .muni-page h5, .muni-page h6 {
+  font-family: "Montserrat", sans-serif;
+}
+
+/* ===== Scope bar ===== */
+
+.muni-scope-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.muni-scope-chip {
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--muni-navy);
+  border-radius: 999px;
+}
+
+.muni-scope-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muni-muted);
+}
+
+/* ===== Cards ===== */
+
+.muni-card {
+  height: 100%;
+  background: #fff;
+  border: 1px solid var(--muni-border);
+  border-radius: 14px;
+  box-shadow: var(--muni-shadow);
+}
+
+.muni-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--muni-border);
+  flex-wrap: wrap;
+}
+
+.muni-card-head-left { display: flex; align-items: flex-start; gap: 9px; min-width: 0; }
+.muni-card-head-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.muni-card-head-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #EEF3F9;
+  color: var(--muni-navy);
+  flex-shrink: 0;
+}
+
+.muni-card-title { margin: 0; font-size: 14.5px; font-weight: 700; color: var(--muni-text); line-height: 1.35; }
+.muni-card-sub { margin: 2px 0 0; font-size: 12px; color: var(--muni-muted); line-height: 1.4; }
+.muni-card-body { padding: 14px 16px 16px; }
+
+.muni-chart { width: 100%; }
+.muni-caption { margin: 10px 0 0; font-size: 12px; line-height: 1.5; color: var(--muni-muted); }
+.muni-muted-sm { font-size: 12px; color: var(--muni-muted); }
+
+/* ===== Chips ===== */
+
+.muni-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muni-text-2);
+  background: #F7F8FA;
+  border: 1px solid var(--muni-border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.muni-chip--meta { background: #fff; color: var(--muni-text-2); }
+.muni-chip--muted { background: #fff; color: var(--muni-muted); }
+
+.muni-chip-swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+
+.muni-chip-swatch--dashed { border-style: dashed; border-width: 1.5px; }
+
+/* ===== Legend (donut) ===== */
+
+.muni-method {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-direction: column;
+}
+
+.muni-method-donut { width: 190px; height: 190px; flex-shrink: 0; }
+
+.muni-legend {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  column-gap: 12px;
+  row-gap: 10px;
+  align-items: center;
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.muni-legend-item { display: contents; }
+.muni-legend-swatch { width: 11px; height: 11px; border-radius: 3px; }
+
+.muni-legend-name { font-size: 13px; font-weight: 600; color: var(--muni-text); }
+
+.muni-legend-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muni-text-2);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.muni-legend-pct {
+  font-size: 12.5px;
+  color: var(--muni-muted);
+  text-align: right;
+  min-width: 46px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Tabs ===== */
+
+.muni-tabs {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  margin-bottom: 12px;
+  background: #F1F3F6;
+  border-radius: 9px;
+}
+
+.muni-tab {
+  padding: 5px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muni-text-2);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.muni-tab:hover { color: var(--muni-text); background: #fff; }
+.muni-tab.is-active { color: #fff; background: var(--muni-navy); }
+
+/* ===== Stat tiles (environment) ===== */
+
+.muni-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.muni-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: #FAFBFC;
+  border: 1px solid var(--muni-border);
+  border-radius: 12px;
+}
+
+.muni-tile-label { font-size: 11.5px; font-weight: 600; color: var(--muni-muted); }
+
+.muni-tile-value {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--muni-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.muni-tile-unit { font-size: 13px; font-weight: 500; color: var(--muni-text-2); }
+
+.muni-methods { margin-top: 14px; }
+.muni-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* ===== Table ===== */
+
+.muni-table-wrap { overflow-x: auto; margin: 0 -16px; padding: 0 16px; }
+
+.muni-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.muni-table th {
+  padding: 0 12px 8px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--muni-border);
+}
+
+.muni-table th.is-right { text-align: right; }
+
+.muni-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muni-muted);
+  background: none;
+  border: none;
+  transition: color 150ms ease;
+}
+
+.muni-sort:hover { color: var(--muni-ocean); }
+.muni-sort.is-active { color: var(--muni-navy); }
+
+.muni-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #F1F3F6;
+  color: var(--muni-text-2);
+  vertical-align: middle;
+}
+
+.muni-table tbody tr { background: #fff; transition: background-color 150ms ease; }
+.muni-table tbody tr:hover { background: #F7F9FC; }
+.muni-table tbody tr.is-leading { background: #FBF6EC; }
+.muni-table tbody tr.is-leading:hover { background: #FAF1E0; }
+.muni-table td.is-right { text-align: right; font-variant-numeric: tabular-nums; }
+
+.muni-cell-name {
+  font-weight: 600;
+  color: var(--muni-text);
+  white-space: nowrap;
+}
+
+.muni-lead-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #8A5A06;
+  background: #FBF0DA;
+  border: 1px solid #F0DEB8;
+  border-radius: 999px;
+}
+
+.muni-bar-cell {
+  position: relative;
+  display: inline-block;
+  min-width: 130px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-weight: 600;
+  color: var(--muni-text);
+  background: linear-gradient(to left, #E4EDF9 var(--muni-bar, 0%), transparent var(--muni-bar, 0%));
+}
+
+/* ===== Empty state ===== */
+
+.muni-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 140px;
+  font-size: 13px;
+  color: var(--muni-muted);
+  text-align: center;
+}
+
+.muni-empty-chip {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muni-text-2);
+  background: var(--muni-soft-slate);
+  border: 1px solid var(--muni-nodata-edge);
+  border-radius: 999px;
+}
+
+.muni-footnote {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--muni-muted);
+}
+
+/* ===== Responsive ===== */
+
+@media (max-width: 991px) {
+  .muni-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 767px) {
+  .muni-method { flex-direction: column; align-items: stretch; }
+  .muni-method-donut { width: 100%; height: 210px; }
+  .muni-legend { flex: 1 1 100%; }
+}
+
+@media (max-width: 480px) {
+  .muni-tiles { grid-template-columns: minmax(0, 1fr); }
+  .muni-card-body { padding: 12px 12px 14px; }
+  .muni-table-wrap { margin: 0 -12px; padding: 0 12px; }
+}

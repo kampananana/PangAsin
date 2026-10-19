@@ -108,14 +108,25 @@ def run():
 @forecast_api_bp.route("/runs", methods=["GET"])
 @login_required
 def list_runs():
+    """List forecast runs, newest first.
+
+    Query: municipality_id (optional), scope="all" (the province-wide run,
+           municipality_id IS NULL), latest="1" (only the newest run, which is
+           all the Forecasting page needs and is far cheaper to serialize).
+    """
     if _admin_only():
         return jsonify({"error": "Admin access only."}), 403
 
     municipality_id = request.args.get("municipality_id", type=int)
+    scope = request.args.get("scope")
+    latest = request.args.get("latest") in ("1", "true", "yes")
     q = ForecastRun.query
-    if municipality_id is not None:
+    if scope == "all":
+        # Province-wide run: municipality_id IS NULL.
+        q = q.filter(ForecastRun.municipality_id.is_(None))
+    elif municipality_id is not None:
         q = q.filter_by(municipality_id=municipality_id)
-    runs = q.order_by(ForecastRun.created_at.desc()).limit(50).all()
+    runs = q.order_by(ForecastRun.created_at.desc()).limit(1 if latest else 50).all()
 
     return jsonify({"runs": [_serialize_run(r) for r in runs]})
 

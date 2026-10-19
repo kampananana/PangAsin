@@ -9,7 +9,9 @@ import AdminLayout from './components/admin/AdminLayout';
 import AdminPage from './components/admin/AdminPage';
 import UsersManagement from './components/admin/UsersManagement';
 import ForecastDashboard from './components/admin/ForecastDashboard';
-import DecisionSupport from './components/admin/DecisionSupport';
+// NOTE: the old Target Evaluation page (components/admin/DecisionSupport.jsx)
+// is kept on disk for rollback, but the route now uses the new page.
+import TargetEvaluation from './components/admin/target/TargetEvaluation';
 import GenerateReports from './components/admin/GenerateReports';
 import ValidationQueue from './components/admin/ValidationQueue';
 import DataQualityDashboard from './components/admin/DataQualityDashboard';
@@ -113,7 +115,7 @@ export default function App() {
           <Route path="validation" element={<ValidationQueue />} />
           <Route path="data-quality" element={<DataQualityDashboard />} />
           <Route path="forecast" element={<ForecastDashboard />} />
-          <Route path="forecast/target" element={<DecisionSupport />} />
+          <Route path="forecast/target" element={<TargetEvaluation />} />
           <Route path="reports" element={<GenerateReports />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
