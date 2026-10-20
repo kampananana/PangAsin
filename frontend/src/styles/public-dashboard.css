@@ -1,10 +1,84 @@
 /* ============================================================
-   WHAT: Public dashboard refinements (Public/Guest page only).
+   WHAT: Public dashboard styles (Public/Guest page only).
    WHY: Ini-align ang public page sa clean header ng Admin/Encoder
         nang HINDI ginagalaw ang admin/encoder. Naka-scope lahat sa
         .public-dashboard o sa .public-* na klase, kaya walang epekto
         sa ibang pages. Additive lang — walang binabago sa index.css.
    ============================================================ */
+
+/* ---------- Chart design tokens (mirrors the admin forecast card spec) ---------- */
+/* WHAT: '--fc-*' ay scoped sa '.forecast-page' sa admin (components/admin/
+   forecast/forecast.css), kaya kailangan itong i-declare dito para magamit ng
+   shared na fc-* classes (card head, chips, tooltip) sa public page.
+   WHY: eksaktong pareho ang token values kaya magkakapareho ang public at
+        admin charts — walang bagong color system na naiintroduce. */
+.public-dashboard {
+  --fc-navy: #0C2340;
+  --fc-ocean: #1565C8;
+  --fc-gold: #F09A28;
+  --fc-green: #29B039;
+  --fc-brown: #574326;
+  --fc-grid: #E9ECEF;
+  --fc-axis: #8A98A8;
+  --fc-text: #111827;
+  --fc-text-2: #4B5563;
+  --fc-text-muted: #8A94A3;
+  --fc-border: #E7EAEF;
+  --fc-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+/* WHAT: Card shell ng public charts — mirror ng '.forecast-page .fc-card'.
+   WHY: Parehong radius/border/shadow/hover sa admin forecast cards. Ang
+        '.admin-content .fc-card' rule sa index.css ang naka-override dito
+        (public-dashboard.css ang mas huli sa import order). */
+.public-dashboard .fc-card {
+  width: 100%;
+  height: 100%;
+  background: #fff;
+  border: 1px solid var(--fc-border);
+  border-radius: 14px;
+  box-shadow: var(--fc-shadow);
+  transition: box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.public-dashboard .fc-card:hover {
+  transform: none;
+  border-color: var(--fc-border);
+  box-shadow: 0 6px 18px -14px rgba(12, 35, 64, 0.4);
+}
+
+/* WHAT: Card header na puti na may 1px na hairline sa ilalim.
+   WHY: pareho sa admin (fc-card-head) at hindi na sumasala sa generic na
+        .admin-content .card-header rule. */
+.public-dashboard .fc-card-head {
+  background: #fff;
+  border-bottom: 1px solid var(--fc-border);
+}
+
+/* WHAT: Naka-right ang right-side ng card header kahit mag-wrap sa bagong linya.
+   WHY: sa makitid na card (hal. sector card) nakasulat ang "Reference data" tag
+        sa ilalim ng title — dapat ito ay nasa kanan, hindi nasa kaliwa. */
+.public-dashboard .fc-card-head-right {
+  margin-left: auto;
+}
+
+/* WHAT: Legend wrapper sa ilalim ng chart.
+   WHY: parehong chip styling ng admin (fc-chip) pero nakapila sa isang row. */
+.fc-card-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 10px;
+}
+
+/* WHAT: Bahagdan sa loob ng legend chip (muted, tabular).
+   WHY: hindi umaabo sa pangalan ng sector pero nananatiling basahin. */
+.public-chip-pct {
+  color: var(--fc-text-muted);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---------- KPI strip ---------- */
 /* WHAT: Bahagyang pag-angat + mas malalim na shadow sa hover.
@@ -22,10 +96,306 @@
   margin-bottom: 1.75rem;
 }
 
+/* ---------- Introduction (ASIN / salt) ---------- */
+/* WHAT: Dalawang column — teksto sa kaliwa, quick facts sa kanan.
+   WHY: naiintroduse ang konteksto bago ang mga numero, at hindi umaabuso
+        sa espasyo ang mga chip. */
+.public-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 28px 32px;
+  align-items: start;
+  margin-bottom: 1.5rem;
+  padding: 26px 28px;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-card);
+  box-shadow: var(--ui-shadow);
+}
+
+.public-intro-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  color: var(--p-ocean);
+  margin-bottom: 0.45rem;
+}
+
+.public-intro-title {
+  margin: 0 0 0.75rem;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--ui-text);
+  max-width: 28ch;
+}
+
+.public-intro-body {
+  margin: 0 0 0.75rem;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--p-ink);
+  max-width: 62ch;
+}
+
+.public-intro-body:last-child {
+  margin-bottom: 0;
+}
+
+.public-intro-body--muted {
+  font-size: 13.5px;
+  color: var(--ui-text-2);
+}
+
+/* WHAT: 2x2 grid na maliit na fact tiles.
+   WHY: mabilis basahin ang bilang ng mamamayan, beds, methods at as-of date. */
+.public-intro-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.public-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  background: #FAFBFC;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-row);
+}
+
+.public-fact-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+
+.public-fact-icon--ocean { background: #E8F0FC; color: #1565C8; }
+.public-fact-icon--green { background: #E6F4EA; color: #1E7B34; }
+.public-fact-icon--gold { background: #FDF1E0; color: #B45309; }
+.public-fact-icon--navy { background: #EEF3F9; color: #0C2340; }
+
+.public-fact-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ui-text-muted);
+}
+
+.public-fact-value {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--ui-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.public-fact-value--text {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+/* ---------- About the ASIN Center + Mandate ---------- */
+.public-about {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 28px 32px;
+  margin-bottom: 1.75rem;
+  padding: 26px 28px;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-card);
+  box-shadow: var(--ui-shadow);
+}
+
+.public-about-main {
+  min-width: 0;
+}
+
+.public-about-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  color: var(--p-ocean);
+  margin-bottom: 0.45rem;
+}
+
+.public-about-title {
+  margin: 0 0 0.75rem;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--ui-text);
+}
+
+.public-about-body {
+  margin: 0 0 0.85rem;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--p-ink);
+  max-width: 60ch;
+}
+
+.public-about-body:last-child {
+  margin-bottom: 0;
+}
+
+/* WHAT: Mandate panel na may divider sa kaliwa.
+   WHY: visual na paghahati ng "ano ang ASIN" at "ano ang kanilang gawain". */
+.public-about-mandate {
+  min-width: 0;
+  padding-left: 28px;
+  border-left: 1px solid var(--ui-border);
+}
+
+.public-mandate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.public-mandate-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.public-mandate-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  flex-shrink: 0;
+}
+
+.public-mandate-icon--ocean { background: #E8F0FC; color: #1565C8; }
+.public-mandate-icon--green { background: #E6F4EA; color: #1E7B34; }
+.public-mandate-icon--gold { background: #FDF1E0; color: #B45309; }
+.public-mandate-icon--navy { background: #EEF3F9; color: #0C2340; }
+
+.public-mandate-text {
+  min-width: 0;
+}
+
+.public-mandate-title {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--ui-text);
+}
+
+.public-mandate-body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ui-text-2);
+}
+
+/* ---------- Scope switcher (Philippines / Pangasinan) ---------- */
+/* WHAT: Segmented pill na parang ng admin chip (puti, 1px border, pill radius).
+   WHY: Ang dating 'fc-segmented' ay walang CSS sa app kaya naka-render ito
+        bilang plain na button — ngayon ay may tunay na styling. */
+.public-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: #F7F8FA;
+  border: 1px solid var(--fc-border);
+  border-radius: 999px;
+}
+
+.public-segmented-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fc-text-2);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.public-segmented-btn:hover {
+  color: var(--fc-navy);
+  background: #fff;
+}
+
+.public-segmented-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(21, 101, 200, 0.18);
+}
+
+.public-segmented-btn.is-active {
+  background: var(--fc-ocean);
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 4px 12px -8px rgba(21, 101, 200, 0.9);
+}
+
+/* ---------- Balance strip (buod ng supply vs demand) ---------- */
+/* WHAT: Row ng maliit na meta chips sa ilalim ng chart.
+   WHY: Isang beses lang ang basahin ng reader — hindi na kailangang
+        magmental-math para malaman ang unmet demand o ang coverage. */
+.public-balance-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.public-balance-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
+  background: #F7F8FA;
+  border: 1px solid var(--fc-border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--fc-text-2);
+}
+
+.public-balance-label {
+  font-weight: 600;
+}
+
+.public-balance-value {
+  font-weight: 700;
+  color: var(--fc-text);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- Chart caption as a callout ---------- */
 /* WHAT: Flex layout para may espasyo ang icon sa tabi ng teksto.
    WHY: dating plain bordered note; ngayon may tone + icon pero backward compatible
-        (`<ChartCaption>text</ChartCaption>` pa rin ang rendering kapag walang icon). */
+         (`<ChartCaption>text</ChartCaption>` pa rin ang rendering kapag walang icon). */
 .public-chart-caption {
   display: flex;
   align-items: flex-start;
@@ -102,83 +472,52 @@
   border: 0;
 }
 
-/* ---------- Footer ---------- */
-/* WHAT: Navy attribution footer na rounded card (brand shell look).
-   WHY: malinaw na pinagmulan ng datos + credit sa ASIN Center / PSU. */
-.public-footer {
-  margin: 0.5rem 0 2rem;
-  padding: 2rem 2rem 1.25rem;
-  border-radius: var(--ui-radius-shell);
-  background: linear-gradient(135deg, #0c2340 0%, #0d47a1 100%);
-  color: #e7ecf3;
-}
-
-.public-footer-grid {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr;
-  gap: 1.5rem 2rem;
-}
-
-.public-footer-block {
-  min-width: 0;
-}
-
-/* WHAT: Puting pill sa likod ng logo para laging kita kahit dark ang background. */
-.public-footer-logo {
-  display: block;
-  height: 42px;
-  width: auto;
-  margin-bottom: 0.9rem;
-  padding: 6px 12px;
-  border-radius: 12px;
-  background: #ffffff;
-}
-
-.public-footer-org {
-  margin: 0 0 0.4rem;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.5;
-  color: #ffffff;
-}
-
-.public-footer-support {
-  margin: 0;
-  font-size: 12.5px;
-  color: rgba(231, 236, 243, 0.7);
-}
-
-.public-footer-eyebrow {
-  margin-bottom: 0.45rem;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
-  color: var(--p-gold, #f09a28);
-}
-
-.public-footer-meta {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: rgba(231, 236, 243, 0.8);
-}
-
-.public-footer-bottom {
-  margin-top: 1.5rem;
-  padding-top: 1rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.15);
-  font-size: 12.5px;
-  color: rgba(231, 236, 243, 0.7);
-}
-
-@media (max-width: 767.98px) {
-  .public-footer {
-    padding: 1.5rem 1.25rem 1rem;
+/* ---------- Responsive ---------- */
+/* WHAT: <992px — isang column na stack ang intro at about.
+   WHY: hindi sapat ang lapad para sa dalawang teksto + tiles. */
+@media (max-width: 991.98px) {
+  .public-intro,
+  .public-about {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+    padding: 22px;
   }
 
-  .public-footer-grid {
-    grid-template-columns: 1fr;
-    gap: 1.5rem;
+  .public-intro-title {
+    max-width: none;
+  }
+
+  .public-about-mandate {
+    padding-left: 0;
+    padding-top: 20px;
+    border-left: 0;
+    border-top: 1px solid var(--ui-border);
+  }
+}
+
+/* WHAT: <576px — isang column na fact tiles, mas maliit na padding.
+   WHY: hindi dapat mag-overflow ang label sa maliit na screen. */
+@media (max-width: 575.98px) {
+  .public-intro,
+  .public-about {
+    padding: 18px;
+    border-radius: var(--ui-radius-row);
+  }
+
+  .public-intro-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .public-intro-title {
+    font-size: 19px;
+  }
+
+  .public-segmented {
+    width: 100%;
+  }
+
+  .public-segmented-btn {
+    flex: 1 1 0;
+    justify-content: center;
   }
 }

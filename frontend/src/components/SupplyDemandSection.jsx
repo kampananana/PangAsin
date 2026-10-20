@@ -1,47 +1,117 @@
+// WHAT: Public na "Salt Supply and Demand" + "Salt Demand by Sector" — dalawang
+//       card sa iisang row.
+// WHY: Parehong visual language ang admin charts (card shell, grid, axis,
+//      tooltip, caption) kaya hindi mapagkakita kung alin ang public at alin
+//      ang admin. Ang mga numerong hango ay mula sa parehong /api/public/dashboard.
 import React, { useMemo, useState } from 'react';
 import { Card, Row, Col } from 'react-bootstrap';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, LabelList, ResponsiveContainer, Cell, CartesianGrid,
+  BarChart, Bar, XAxis, YAxis, Tooltip, LabelList, ResponsiveContainer, Cell,
+  CartesianGrid, ReferenceLine,
 } from 'recharts';
-import { Globe, MapPin, Lightbulb, BarChart3, PieChart } from 'lucide-react';
+import { Globe, MapPin, BarChart3, PieChart, Info } from 'lucide-react';
 import { getSupplyDemand, getSectorDemand } from '../services/dataService';
-import { BRAND, BRAND_TINTS } from '../theme/colors';
-import ChartCaption from './ChartCaption';
+import {
+  CATEGORY_RAMP, FC_TOKENS, SUPPLY_COLORS, fmtMT, fmtNumber, fmtPct,
+  niceCeil, pctOf,
+} from './public/publicChartTheme';
 
-// WHAT: Kulay kada категоriya (parehas sa buong system). WHY: hindi nagbabago ang kulay
-//      ng bawat serye kahit magpalit ng scope, para mabasa agad ang chart.
-const BAR_COLORS = {
-  'National Demand': BRAND.ocean,
-  'Domestic Supply': BRAND.green,
-  'Imported Salt': BRAND.gold,
-  'Pangasinan Supply': BRAND.ocean,
-  'Demand Benchmark': BRAND.gold,
-};
-
-const SECTOR_COLORS = [BRAND.ocean, BRAND_TINTS.oceanLight, BRAND.gold, BRAND_TINTS.goldLight, BRAND.navy, BRAND.green];
-
-function BarTooltip({ active, payload, unit }) {
+// WHAT: Tooltip na pareho ang admin (fc-tooltip): label + value row + sub row.
+// WHY: Isang itsura para sa lahat ng chart sa app; hindi na kailangang
+//      basahin ang default na Recharts tooltip.
+function SupplyTooltip({ active, payload }) {
   if (!active || !payload || !payload.length) return null;
   const point = payload[0].payload || {};
   return (
-    <div className="admin-chart-tooltip">
-      <div className="ct-label">{point.name || point.sector}</div>
-      <div className="ct-value">{Number(payload[0].value).toLocaleString()} {unit}</div>
+    <div className="fc-tooltip">
+      <div className="fc-tooltip-label">{point.name || point.sector}</div>
+      <div className="fc-tooltip-row">
+        <span>Volume</span><b>{fmtMT(point.value)}</b>
+      </div>
       {point.percentage != null ? (
-        <div className="ct-sub">{point.percentage.toFixed(1)}% of total recorded demand</div>
+        <div className="fc-tooltip-row">
+          <span>Share of demand</span><b>{fmtPct(point.percentage)}</b>
+        </div>
       ) : null}
+      {point.note ? <div className="fc-tooltip-source">{point.note}</div> : null}
     </div>
   );
 }
 
-// WHAT: Legend na ginagamit ang parehong swatch style ng admin charts.
-function CategoryLegend({ labels }) {
+/* WHAT: Custom label renderer para sa value label sa itaas ng vertical bar.
+   WHY: Ang default na Recharts label ay naghahati ng text na may space sa
+        dalawang linya ("683,608" / "MT") — kaya ito ang plain na <text>. */
+function VerticalValueLabel({ x, y, width, value }) {
   return (
-    <div className="admin-chart-legend" aria-hidden="true">
-      {labels.map((label) => (
-        <span key={label} className="admin-chart-legend-item">
-          <span className="admin-chart-legend-swatch" style={{ background: BAR_COLORS[label] || BRAND.ocean }} />
-          {label}
+    <text
+      x={x + width / 2}
+      y={y - 8}
+      textAnchor="middle"
+      fontSize={11.5}
+      fontWeight={700}
+      fill="#343A40"
+      style={{ fontVariantNumeric: 'tabular-nums' }}
+    >
+      {fmtMT(value)}
+    </text>
+  );
+}
+
+/* WHAT: Custom label renderer para sa value label sa kanan ng horizontal bar.
+   WHY: same ang dahilan ng VerticalValueLabel — isang linya, walang wrap. */
+function HorizontalValueLabel({ x, y, width, height, value }) {
+  return (
+    <text
+      x={x + width + 8}
+      y={y + height / 2}
+      dominantBaseline="middle"
+      textAnchor="start"
+      fontSize={11.5}
+      fontWeight={700}
+      fill="#343A40"
+      style={{ fontVariantNumeric: 'tabular-nums' }}
+    >
+      {fmtMT(value)}
+    </text>
+  );
+}
+
+/* WHAT: Custom tick renderer para sa pangalan ng sector.
+   WHY: "Food Processing" ay naghahati din ng default na Recharts tick
+        ("Food" / "Processing") — plain na <text> ang naka-render dito. */
+function CategoryTick({ x, y, payload }) {
+  return (
+    <text
+      x={x}
+      y={y}
+      dy={4}
+      textAnchor="end"
+      fontSize={12}
+      fill={FC_TOKENS.text2}
+    >
+      {payload.value}
+    </text>
+  );
+}
+
+// WHAT: Legend na gumagamit ng fc-chip (parehong admin chart chips).
+// WHY: Parehong chip na hugis at kulay sa header chips ng admin charts.
+//      Ang 'dashed' ay para sa reference line (parehong fc-chip-swatch--dashed).
+function ChartLegend({ items }) {
+  return (
+    <div className="fc-card-legend">
+      {items.map((item) => (
+        <span key={item.label} className="fc-chip">
+          <span
+            className={`fc-chip-swatch${item.dashed ? ' fc-chip-swatch--dashed' : ''}`}
+            style={item.dashed
+              ? { borderColor: item.color, backgroundColor: 'transparent' }
+              : { backgroundColor: item.color }}
+          />
+          {item.label}
+          {item.percentage != null ? (
+            <span className="public-chip-pct">{fmtPct(item.percentage)}</span>
+          ) : null}
         </span>
       ))}
     </div>
@@ -52,59 +122,169 @@ export default function SupplyDemandSection() {
   const [scope, setScope] = useState('philippines');
 
   const data = useMemo(() => getSupplyDemand(scope), [scope]);
-  const supplyDemandRows = data.labels.map((label, index) => ({ name: label, value: data.values[index] }));
   const sectorData = useMemo(
     () =>
       [...getSectorDemand()]
-        .sort((a, b) => b.value - a.value)
-        .map((s) => ({
-          ...s,
-          label: `${s.value.toLocaleString()} MT · ${s.percentage.toFixed(1)}%`,
-        })),
+        .filter((s) => Number(s.value) > 0)
+        .sort((a, b) => b.value - a.value),
     []
   );
 
   const isPhilippines = scope === 'philippines';
 
-  let supplyDemandCaption;
-  if (isPhilippines) {
-    const [demand, supply, imports] = data.values;
-    supplyDemandCaption = `Recorded national demand of ${demand.toLocaleString()} MT outpaces domestic supply of ${supply.toLocaleString()} MT, with imports (${imports.toLocaleString()} MT) covering the shortfall.`;
-  } else {
-    const [pSupply, benchmark] = data.values;
-    const coverage = benchmark > 0 ? (pSupply / benchmark) * 100 : 0;
-    supplyDemandCaption = `Pangasinan's recorded supply of ${pSupply.toLocaleString()} MT covers ${coverage.toFixed(1)}% of the local demand benchmark (${benchmark.toLocaleString()} MT).`;
-  }
+  /* WHAT: Rows ng bar chart + ang mga Derived na sukat (share, gap).
+     WHY: Isang beses lang ang kalkula — hindi kalkulado sa render ng chart. */
+  const { rows, max, legend, balance, caption, benchmark } = useMemo(() => {
+    const [a, b, c] = data.values;
+    const source = isPhilippines
+      ? { demand: a, supply: b, imports: c }
+      : { supply: a, demand: b };
 
-  // WHAT: Plain-text na buod para sa screen readers. WHY: binabasa ng assistive tech
-  //      ang laman ng bar chart kahit walang mouse.
-  const supplyDemandAria = supplyDemandRows
-    .map((r) => `${r.name}: ${Number(r.value).toLocaleString()} ${data.unit}`)
-    .join('; ');
-  const sectorAria = sectorData
-    .map((s) => `${s.sector}: ${Number(s.value).toLocaleString()} MT, ${s.percentage.toFixed(1)} percent`)
-    .join('; ');
+    const demand = Number(source.demand) || 0;
+    const supply = Number(source.supply) || 0;
+    const imports = Number(source.imports) || 0;
+    const covered = supply + (isPhilippines ? imports : 0);
 
-  const spansBoth = sectorData.length >= 2;
+    const built = data.labels.map((label, index) => {
+      const value = Number(data.values[index]) || 0;
+      const share = isPhilippines && label !== 'National Demand' ? pctOf(value, demand) : null;
+      return {
+        name: label,
+        value,
+        color: SUPPLY_COLORS[label] || FC_TOKENS.ocean,
+        percentage: share,
+        note: isPhilippines
+          ? (label === 'National Demand'
+            ? 'Total salt demand benchmark for the Philippines'
+            : (label === 'Domestic Supply'
+              ? 'Salt produced by local producers'
+              : 'Salt sourced from imports'))
+          : (label === 'Demand Benchmark'
+            ? 'Annual salt demand benchmark for Pangasinan'
+            : 'Approved production recorded to date'),
+      };
+    });
+
+    const highest = built.reduce((mx, r) => Math.max(mx, r.value), 0);
+    const axisMax = niceCeil(highest * 1.15);
+
+    const legendItems = built.map((r) => ({ label: r.name, color: r.color }));
+
+    let chips = [];
+    let captionText = '';
+    let benchmarkLine = null;
+    if (isPhilippines) {
+      const domesticShare = pctOf(supply, demand);
+      const importShare = pctOf(imports, demand);
+      const unmet = Math.max(demand - covered, 0);
+      const unmetShare = pctOf(unmet, demand);
+      chips = [
+        { label: 'Domestic supply', value: domesticShare == null ? '—' : fmtPct(domesticShare) },
+        { label: 'Imports', value: importShare == null ? '—' : fmtPct(importShare) },
+        { label: unmet > 0 ? 'Unmet demand' : 'Demand met', value: unmet > 0 ? fmtPct(unmetShare) : '100%' },
+      ];
+      captionText = demand > 0
+        ? `Recorded national demand of ${fmtMT(demand)} is met by ${fmtMT(supply)} of domestic supply and `
+          + `${fmtMT(imports)} of imports`
+          + (unmet > 0
+            ? `, leaving ${fmtMT(unmet)} unmet.`
+            : ', fully covered by domestic supply and imports.')
+        : 'No national salt demand benchmark is available yet.';
+    } else {
+      const coverage = pctOf(supply, demand);
+      const gap = supply - demand;
+      chips = [
+        { label: 'Recorded supply', value: fmtMT(supply) },
+        { label: 'Demand benchmark', value: fmtMT(demand) },
+        {
+          label: gap >= 0 ? 'Surplus' : 'Shortage',
+          value: fmtMT(Math.abs(gap)),
+        },
+      ];
+      captionText =
+        `Pangasinan's recorded supply of ${fmtMT(supply)} covers ${coverage == null ? '—' : fmtPct(coverage)} `
+        + `of the local demand benchmark of ${fmtMT(demand)}`
+        + (gap >= 0 ? ' — a surplus against the benchmark.' : ' — a shortfall against the benchmark.');
+      if (demand > 0) {
+        benchmarkLine = { value: demand };
+        /* WHAT: Dashed chip sa legend para malinaw kung ano ang guhit na linya.
+           WHY: parehong fc-chip-swatch--dashed ng admin — walang text label sa
+                ReferenceLine dahil doon nahaharap sa overlap sa mga bar. */
+        legendItems.push({
+          label: 'Demand benchmark line',
+          color: FC_TOKENS.gold,
+          dashed: true,
+        });
+      }
+    }
+
+    return {
+      rows: built,
+      max: axisMax,
+      legend: legendItems,
+      balance: chips,
+      caption: captionText,
+      benchmark: benchmarkLine,
+    };
+  }, [data, isPhilippines]);
+
+  /* WHAT: Sector rows na may percentage na nakalagay sa legend chip.
+     WHY: Isang lugar lang ang eksaktong numero (bar label = MT, chip = %),
+          at hindi nauubos ang espasyo ng bar. */
+  const sectorRows = useMemo(() => {
+    const total = sectorData.reduce((sum, s) => sum + (Number(s.value) || 0), 0);
+    return sectorData.map((s, index) => ({
+      sector: s.sector,
+      value: Number(s.value) || 0,
+      percentage: total > 0 ? (s.value / total) * 100 : 0,
+      color: CATEGORY_RAMP[index % CATEGORY_RAMP.length],
+    }));
+  }, [sectorData]);
+
+  const sectorMax = niceCeil(sectorRows.reduce((mx, s) => Math.max(mx, s.value), 0) * 1.05);
+
+  const sectorCaption = useMemo(() => {
+    if (sectorRows.length === 0) return 'No sector demand benchmark available yet.';
+    const top = sectorRows[0];
+    const second = sectorRows[1];
+    const total = sectorRows.reduce((sum, s) => sum + s.value, 0);
+    const lead = `${top.sector} is the largest tracked end use at ${fmtMT(top.value)} (${fmtPct(top.percentage)} of tracked demand)`;
+    const follow = second
+      ? `, followed by ${second.sector} (${fmtPct(second.percentage)}).`
+      : '.';
+    return `${lead}${follow} Tracked demand totals ${fmtMT(total)}.`;
+  }, [sectorRows]);
+
+  // WHAT: Plain-text na buod para sa screen readers.
+  const supplyAria = rows.map((r) => `${r.name}: ${fmtMT(r.value)}`).join('; ');
+  const sectorAria = sectorRows
+    .map((s) => `${s.sector}: ${fmtMT(s.value)}, ${fmtPct(s.percentage)}`)
+    .join('; ');
 
   return (
     <section className="public-section">
       <Row className="g-4">
         <Col lg={7}>
-          <Card className="encoder-card h-100">
-            <Card.Header>
-              <div className="d-flex flex-wrap justify-content-between align-items-center gap-2">
-                <div className="admin-card-head">
-                  <span className="admin-card-head-icon admin-kpi-accent-oceanbg"><BarChart3 size={16} strokeWidth={2} /></span>
-                  <div>
-                    <h5 className="admin-card-head-title">Salt Supply and Demand</h5>
-                    <span className="fw-normal text-muted small ms-1">Compare salt demand with production and imports</span>
-                  </div>
+          <Card className="fc-card h-100">
+            <Card.Header className="fc-card-head">
+              <div className="fc-card-head-left">
+                <span className="fc-card-head-icon">
+                  <BarChart3 size={16} strokeWidth={1.75} />
+                </span>
+                <div className="fc-card-head-text">
+                  <h5 className="fc-card-title">Salt Supply and Demand</h5>
+                  <p className="fc-card-sub">Compare salt demand with production and imports (MT)</p>
                 </div>
-                <div className="fc-segmented" role="group" aria-label="Scope selector">
+              </div>
+              {/* WHAT: Segmented scope switcher (Philippines / Pangasinan).
+                  WHY: Ang dating `fc-segmented` ay walang CSS sa app kaya
+                       naka-render ito bilang plain na button — ngayon ay may
+                       tunay na pill styling na kapareho ng admin chips. */}
+              <div className="fc-card-head-right">
+                <div className="public-segmented" role="group" aria-label="Scope selector">
                   <button
                     type="button"
-                    className={`fc-segmented-btn ${isPhilippines ? 'active' : ''}`}
+                    className={`public-segmented-btn ${isPhilippines ? 'is-active' : ''}`}
                     aria-pressed={isPhilippines}
                     onClick={() => setScope('philippines')}
                   >
@@ -113,7 +293,7 @@ export default function SupplyDemandSection() {
                   </button>
                   <button
                     type="button"
-                    className={`fc-segmented-btn ${!isPhilippines ? 'active' : ''}`}
+                    className={`public-segmented-btn ${!isPhilippines ? 'is-active' : ''}`}
                     aria-pressed={!isPhilippines}
                     onClick={() => setScope('pangasinan')}
                   >
@@ -123,109 +303,152 @@ export default function SupplyDemandSection() {
                 </div>
               </div>
             </Card.Header>
-            <Card.Body className={isPhilippines ? 'scope-tint-philippines' : 'scope-tint-pangasinan'}>
-              <span className={`scope-flag ${isPhilippines ? 'scope-flag-philippines' : 'scope-flag-pangasinan'}`}>
-                {isPhilippines ? <Globe size={13} /> : <MapPin size={13} />}
-                {isPhilippines ? 'National scope' : 'Provincial scope'}
-              </span>
-              <ChartCaption icon={<Lightbulb size={15} strokeWidth={2} />}>{supplyDemandCaption}</ChartCaption>
-              {/* WHAT: role="img" + aria-label. WHY: isang buod na lang ang binabasa ng SR. */}
+            <Card.Body className="fc-card-body">
               <div
-                className="chart-container"
+                className="fc-chart"
                 style={{ height: 300 }}
                 role="img"
-                aria-label={`Bar chart of salt supply and demand in ${data.unit}. ${supplyDemandAria}.`}
+                aria-label={`Bar chart of salt supply and demand in metric tons. ${supplyAria}.`}
               >
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={supplyDemandRows} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(21, 35, 58, 0.08)" />
+                  <BarChart data={rows} margin={{ top: 24, right: 16, bottom: 4, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={FC_TOKENS.grid} />
                     <XAxis
                       dataKey="name"
-                      tick={{ fontSize: 12 }}
+                      tick={{ fontSize: 12, fill: FC_TOKENS.text2 }}
                       tickLine={false}
-                      axisLine={{ stroke: 'rgba(21, 35, 58, 0.15)' }}
+                      axisLine={{ stroke: FC_TOKENS.border }}
+                      interval={0}
                     />
                     <YAxis
-                      tick={{ fontSize: 12 }}
+                      type="number"
+                      domain={[0, max]}
+                      tick={{ fontSize: 11, fill: FC_TOKENS.muted }}
                       tickLine={false}
                       axisLine={false}
-                      width={72}
-                      tickFormatter={(value) => value.toLocaleString()}
-                      label={{ value: data.unit, angle: -90, position: 'insideLeft', offset: 0,
-                        style: { fontSize: 11, fill: '#6b7280', textAnchor: 'middle' } }}
+                      width={62}
+                      tickFormatter={fmtNumber}
                     />
-                    <Tooltip cursor={{ fill: 'rgba(21, 101, 200, 0.06)' }} content={<BarTooltip unit={data.unit} />} />
-                    <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={64}>
-                      {data.labels.map((label) => (
-                        <Cell key={label} fill={BAR_COLORS[label] || BRAND.ocean} />
+                    <Tooltip
+                      cursor={{ fill: 'rgba(21, 101, 200, 0.06)' }}
+                      content={<SupplyTooltip />}
+                    />
+                    {benchmark && (
+                      <ReferenceLine
+                        y={benchmark.value}
+                        stroke={FC_TOKENS.gold}
+                        strokeDasharray="5 3"
+                        strokeWidth={2}
+                      />
+                    )}
+                    <Bar dataKey="value" name="Volume" radius={[6, 6, 0, 0]} maxBarSize={64}>
+                      {rows.map((row) => (
+                        <Cell key={row.name} fill={row.color} />
                       ))}
+                      <LabelList dataKey="value" content={<VerticalValueLabel />} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <CategoryLegend labels={data.labels} />
-              <p className="text-muted small mt-2 mb-0">{data.note}</p>
+
+              <ChartLegend items={legend} />
+
+              {/* WHAT: Meta chips na may numerong buod ng balanse.
+                  WHY: Isang beses lang ang basahin ang reader — hindi na kailangang
+                       magmental-math para malaman ang unmet demand. */}
+              <div className="public-balance-strip">
+                {balance.map((chip) => (
+                  <span key={chip.label} className="public-balance-chip">
+                    <span className="public-balance-label">{chip.label}</span>
+                    <span className="public-balance-value">{chip.value}</span>
+                  </span>
+                ))}
+              </div>
+
+              <p className="fc-chart-caption">{caption}</p>
             </Card.Body>
           </Card>
         </Col>
 
         <Col lg={5}>
-          <Card className="encoder-card h-100">
-            <Card.Header>
-              <div className="admin-card-head">
-                <span className="admin-card-head-icon admin-kpi-accent-goldbg"><PieChart size={16} strokeWidth={2} /></span>
-                <div>
-                  <h5 className="admin-card-head-title">Salt Demand by Sector</h5>
-                  <span className="fw-normal text-muted small ms-1">National breakdown by end use</span>
+          <Card className="fc-card h-100">
+            <Card.Header className="fc-card-head">
+              <div className="fc-card-head-left">
+                <span className="fc-card-head-icon">
+                  <PieChart size={16} strokeWidth={1.75} />
+                </span>
+                <div className="fc-card-head-text">
+                  <h5 className="fc-card-title">Salt Demand by Sector</h5>
+                  <p className="fc-card-sub">National breakdown by end use (MT)</p>
                 </div>
               </div>
-            </Card.Header>
-            <Card.Body>
-              {spansBoth && (
-                <ChartCaption tone="info" icon={<Lightbulb size={15} strokeWidth={2} />}>
-                  {sectorData[0].sector} is the largest recorded end use ({sectorData[0].percentage.toFixed(1)}% of
-                  total), followed by {sectorData[1].sector} ({sectorData[1].percentage.toFixed(1)}%).
-                </ChartCaption>
-              )}
-              <div
-                className="chart-container"
-                style={{ height: 320 }}
-                role="img"
-                aria-label={`Horizontal bar chart of salt demand by sector in MT. ${sectorAria}.`}
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={sectorData} layout="vertical" margin={{ top: 4, right: 150, left: 8, bottom: 18 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(21, 35, 58, 0.08)" />
-                    <XAxis
-                      type="number"
-                      tick={{ fontSize: 12 }}
-                      tickLine={false}
-                      axisLine={{ stroke: 'rgba(21, 35, 58, 0.15)' }}
-                      tickFormatter={(value) => value.toLocaleString()}
-                      label={{ value: 'MT', position: 'insideBottomRight', offset: -2,
-                        style: { fontSize: 11, fill: '#6b7280' } }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="sector"
-                      tick={{ fontSize: 11 }}
-                      tickLine={false}
-                      axisLine={false}
-                      width={120}
-                    />
-                    <Tooltip cursor={{ fill: 'rgba(21, 101, 200, 0.06)' }} content={<BarTooltip unit="MT" />} />
-                    <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={30}>
-                      {sectorData.map((entry, index) => (
-                        <Cell key={entry.sector} fill={SECTOR_COLORS[index % SECTOR_COLORS.length]} />
-                      ))}
-                      <LabelList dataKey="label" position="right" className="chart-bar-label" />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+              <div className="fc-card-head-right">
+                <span className="reference-tag">
+                  <Info size={12} strokeWidth={2} /> Reference data &mdash; not live
+                </span>
               </div>
-              <p className="text-muted small mt-2 mb-0">
-                Reference data — compiled from recorded national salt demand benchmarks in the dashboard database.
-              </p>
+            </Card.Header>
+            <Card.Body className="fc-card-body">
+              {sectorRows.length === 0 ? (
+                <div className="chart-empty">
+                  <span className="chart-empty-chip">No data</span>
+                  No sector demand reference data available yet.
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="fc-chart"
+                    style={{ height: 300 }}
+                    role="img"
+                    aria-label={`Horizontal bar chart of salt demand by sector in metric tons. ${sectorAria}.`}
+                  >
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={sectorRows}
+                        layout="vertical"
+                        margin={{ top: 4, right: 76, bottom: 4, left: 0 }}
+                        barCategoryGap="28%"
+                      >
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={FC_TOKENS.grid} />
+                        <XAxis
+                          type="number"
+                          domain={[0, sectorMax]}
+                          tick={{ fontSize: 11, fill: FC_TOKENS.muted }}
+                          tickLine={false}
+                          axisLine={{ stroke: FC_TOKENS.border }}
+                          tickFormatter={fmtNumber}
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="sector"
+                          tick={<CategoryTick />}
+                          tickLine={false}
+                          axisLine={false}
+                          width={104}
+                        />
+                        <Tooltip
+                          cursor={{ fill: 'rgba(21, 101, 200, 0.06)' }}
+                          content={<SupplyTooltip />}
+                        />
+                        <Bar dataKey="value" name="Sector demand" radius={[0, 6, 6, 0]} maxBarSize={28}>
+                          {sectorRows.map((row) => (
+                            <Cell key={row.sector} fill={row.color} />
+                          ))}
+                          <LabelList dataKey="value" content={<HorizontalValueLabel />} />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <ChartLegend
+                    items={sectorRows.map((row) => ({
+                      label: row.sector,
+                      color: row.color,
+                      percentage: row.percentage,
+                    }))}
+                  />
+                  <p className="fc-chart-caption">{sectorCaption}</p>
+                </>
+              )}
             </Card.Body>
           </Card>
         </Col>

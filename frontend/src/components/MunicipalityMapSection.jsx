@@ -220,17 +220,22 @@ export default function MunicipalityMapSection() {
 
   return (
     <section className="public-section">
-      <Card className="encoder-card">
-        <Card.Header>
-          <div className="admin-card-head">
-            <span className="admin-card-head-icon admin-kpi-accent-oceanbg"><MapPin size={16} strokeWidth={2} /></span>
-            <div>
-              <h5 className="admin-card-head-title">Salt Production Across Pangasinan</h5>
-              <span className="fw-normal text-muted small ms-1">Recorded production distribution by municipality</span>
+      {/* WHAT: fc-card + fc-card-head para pareho ang card shell ng charts sa
+         itaas (14px radius, icon chip, title + subtitle).
+         WHY: isang visual language ang buong public page. */}
+      <Card className="encoder-card fc-card">
+        <Card.Header className="fc-card-head">
+          <div className="fc-card-head-left">
+            <span className="fc-card-head-icon">
+              <MapPin size={16} strokeWidth={1.75} />
+            </span>
+            <div className="fc-card-head-text">
+              <h5 className="fc-card-title">Salt Production Across Pangasinan</h5>
+              <p className="fc-card-sub">Recorded production distribution by municipality</p>
             </div>
           </div>
         </Card.Header>
-        <Card.Body>
+        <Card.Body className="fc-card-body">
           {/* WHAT: Region na may descriptive label para sa screen readers.
              WHY: ang Leaflet map ay biswal; ang label + sr-only summary ang nagbibigay ng teksto. */}
           <div

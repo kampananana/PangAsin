@@ -9,6 +9,8 @@ import Reveal from './Reveal';
 import MunicipalityMapSection from './MunicipalityMapSection';
 import SupplyDemandSection from './SupplyDemandSection';
 import MunicipalityMapArt from './encoder/MunicipalityMapArt';
+import PublicIntro from './public/PublicIntro';
+import PublicAbout from './public/PublicAbout';
 import KpiGrid from './ui/KpiGrid';
 import KpiCard from './ui/KpiCard';
 import { loadPublicDashboardData } from '../services/dataService';
@@ -88,6 +90,25 @@ export default function GuestDashboard() {
         </div>
       )}
 
+      {/* WHAT: Dalawang bagay bago ang mga numero — maikling introduksiyon at
+         ang About/Mandate block.
+         WHY: ang bisitante ay nangangailangan ng konteksto (ano ito, sino ang
+              nag-publish, ano ang mandate) bago pa basahin ang mga KPI. */}
+      {data && (
+        <>
+          <Reveal>
+            <PublicIntro
+              municipalities={data.municipalities || []}
+              supplyDemand={data.supplyDemand || null}
+            />
+          </Reveal>
+
+          <Reveal>
+            <PublicAbout />
+          </Reveal>
+        </>
+      )}
+
       {kpis && (
         <Reveal>
           <KpiGrid columns={4} className="public-kpi-grid">
@@ -118,7 +139,7 @@ export default function GuestDashboard() {
             <KpiCard
               icon={Boxes}
               title="Recorded Production"
-              value={kpis.totalMT}
+              value={kpis.totalMT == null ? null : Math.round(kpis.totalMT * 100) / 100}
               unit="MT"
               supporting="Total approved production · Pangasinan"
               info="Total approved salt production recorded by Pangasinan municipalities to date."
@@ -126,14 +147,6 @@ export default function GuestDashboard() {
           </KpiGrid>
         </Reveal>
       )}
-
-      <div className="public-about-card">
-        <div className="public-about-eyebrow">About the ASIN Center</div>
-        <h2 className="public-about-title">Accelerating the Philippine Salt Industry</h2>
-        <p className="public-about-body">
-          The Accelerating Salt Research and Innovation (ASIN) Center at Pangasinan State University supports the Philippine salt industry through research, innovation, and data-driven planning under RA 11985. This dashboard presents approved and aggregated salt production information from the salt-producing municipalities of Pangasinan.
-        </p>
-      </div>
 
       {loading && (
         <div className="skeleton-dashboard">
@@ -154,43 +167,6 @@ export default function GuestDashboard() {
           </Reveal>
         </>
       )}
-
-      {/* WHAT: Attribution footer na navy, katulad ng brand shell.
-         WHY: malinaw kung kanino ang datos at kung saan galing (governance + source). */}
-      <footer className="public-footer" aria-label="About this dashboard">
-        <div className="public-footer-grid">
-          <div className="public-footer-block">
-            <img
-              src="/static/brand/Logo_with_PangAsin.png"
-              alt="PangAsin"
-              className="public-footer-logo"
-            />
-            <p className="public-footer-org">
-              Accelerating Salt Research and Innovation (ASIN) Center<br />
-              Pangasinan State University
-            </p>
-            <p className="public-footer-support">Supported by the DOST NICER Program.</p>
-          </div>
-          <div className="public-footer-block">
-            <div className="public-footer-eyebrow">Data source</div>
-            <p className="public-footer-meta">
-              Figures are aggregated from approved salt production records submitted by municipal
-              encoders and validated by the ASIN Center. Values are indicative and updated as
-              records are approved.
-            </p>
-          </div>
-          <div className="public-footer-block">
-            <div className="public-footer-eyebrow">Reference</div>
-            <p className="public-footer-meta">
-              Produced under RA 11985 (Philippine Salt Industry Development Act). Municipal
-              boundaries from NAMRIA / PSA administrative data.
-            </p>
-          </div>
-        </div>
-        <div className="public-footer-bottom">
-          <span>&copy; 2026 PangAsin &middot; ASIN Center, Pangasinan State University</span>
-        </div>
-      </footer>
     </div>
   );
 }

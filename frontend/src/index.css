@@ -54,60 +54,10 @@ body {
   max-width: 1200px;
 }
 
-.public-about-card {
-  position: relative;
-  background: linear-gradient(180deg, #ffffff 0%, var(--p-sand) 100%);
-  border: 1px solid var(--gray-200);
-  border-radius: 16px;
-  padding: 1.6rem 1.75rem 1.6rem 2rem;
-  margin: 0 0 2rem;
-  box-shadow: 0 8px 24px -16px rgba(13, 71, 161, 0.35);
-}
-
-.public-about-card::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 14px;
-  bottom: 14px;
-  width: 4px;
-  border-radius: 0 4px 4px 0;
-  background: linear-gradient(180deg, var(--p-gold), #d6841a);
-}
-
-.public-about-eyebrow {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1.4px;
-  color: var(--p-ocean);
-  margin-bottom: 0.4rem;
-}
-
-.public-about-title {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--p-navy);
-  margin: 0 0 0.5rem;
-  letter-spacing: -0.2px;
-}
-
-.public-about-body {
-  font-size: 14.5px;
-  line-height: 1.65;
-  color: var(--p-ink);
-  margin: 0;
-  max-width: 780px;
-}
-
-@media (max-width: 575.98px) {
-  .public-about-card {
-    padding: 1.25rem 1.25rem 1.25rem 1.5rem;
-  }
-  .public-about-body {
-    font-size: 14px;
-  }
-}
+/* WHAT: Naalis ang dating .public-about-card block.
+   WHY: Pinalitan ng .public-about / .public-intro sa styles/public-dashboard.css
+        (public-scoped) — ang mga lumang rules ay ginamit na lang ng public page
+        at wala nang reference sa codebase. */
 
 /* Map */
 .map-wrapper {
