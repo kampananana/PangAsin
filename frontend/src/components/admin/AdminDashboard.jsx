@@ -8,7 +8,7 @@ import {
   getAdminSupplyDemand,
 } from '../../services/dataService';
 import { BRAND, oceanScale, OCEAN_LIGHT } from '../../theme/colors';
-import { buildProvinceMaskRings, addProvinceMask, addLightBasemap } from '../../utils/mapLayers';
+import { buildProvinceMaskRings, addProvinceMask, addBasemap } from '../../utils/mapLayers';
 import { buildMapDetailCard, clampMapDetailTooltip } from '../../utils/mapDetailCard';
 import geojson from '../../data/pangasinan_municipalities.json';
 import geojsonAll from '../../data/pangasinan_municipalities_all.json';
@@ -295,6 +295,9 @@ function MunicipalityMap({ muniData, selectedName }) {
     const genderText = m.registered > 0
       ? `${(m.male || 0).toLocaleString()} / ${(m.female || 0).toLocaleString()}`
       : '—';
+    /* WHAT: Kg per Bed = (volumeMT * 1000) / beds, 2 decimal places.
+       WHY: dating admin card (Sep 18) ang ginagamit ng kg-per-bed; 16.09 sa Bani. */
+    const kgPerBed = m.beds > 0 ? ((m.volumeMT * 1000) / m.beds).toFixed(2) : '—';
     return buildMapDetailCard({
       name: m.name,
       rows: [
@@ -304,7 +307,7 @@ function MunicipalityMap({ muniData, selectedName }) {
         ['Salt Beds', (m.beds || 0).toLocaleString()],
         ['Registered Producers', (m.registered || 0).toLocaleString()],
         ['Male / Female', genderText],
-        ['MT per Bed', (m.efficiency ?? 0).toLocaleString()],
+        ['Kg per Bed', kgPerBed],
       ],
     });
   }, []);
@@ -323,8 +326,11 @@ function MunicipalityMap({ muniData, selectedName }) {
       minZoom: 7,
       maxZoom: 15,
       maxBoundsViscosity: 1.0,
-      zoomControl: false,
-      dragging: false,
+      /* WHAT: Zoom +/- (top-left) at draggable ang mapa.
+         WHY: dating admin map (Sep 18) ay nangangailangan ng +/- up/down sa
+              gilid at naka-drag para makita ang buong lalawigan. */
+      zoomControl: true,
+      dragging: true,
       scrollWheelZoom: false,
       doubleClickZoom: false,
       boxZoom: false,
@@ -332,10 +338,14 @@ function MunicipalityMap({ muniData, selectedName }) {
     }).setView(provinceBounds.getCenter(), 8);
     mapInstanceRef.current = map;
 
-    addLightBasemap(map);
-    /* WHAT: Lighter province mask so the big map reads light without a new provider.
-       WHY: reduced dark tint keeps boundaries visible while lifting the overall tone. */
-    addProvinceMask(map, buildProvinceMaskRings([geojsonAll, geojson], provinceBounds));
+    /* WHAT: OSM basemap (dating admin look) + madilim na province mask.
+       WHY: walang API key at walang watermark ang OSM; ang dark mask ay ang
+            mismong dating itsura ng admin map. */
+    addBasemap(map);
+    addProvinceMask(map, buildProvinceMaskRings([geojsonAll, geojson], provinceBounds), {
+      fillColor: '#334155',
+      fillOpacity: 0.75,
+    });
 
     const detailAnchor = L.marker([0, 0], {
       icon: L.divIcon({ className: 'detail-anchor', html: '', iconSize: [0, 0] }),
@@ -361,12 +371,31 @@ function MunicipalityMap({ muniData, selectedName }) {
       }
     });
 
+    /* WHAT: Huwag na payag ang mapa na "mapatay" ang detail card.
+       WHY: ang card ay isang interactive Leaflet tooltip sa zero-size anchor
+            marker; paglabas ng mouse sa card, ang mouseout ay bumabalik sa
+            mapa at nagsasara ng tooltip (nawawala ang card pagkatapos ng
+            pan + zoom). Hinahawakan dito ang 'mouseover mouseout' sa mismong
+            tooltip element para hindi ito maisabog sa mapa. */
+    detailAnchor.on('tooltipopen', () => {
+      const tip = detailAnchor.getTooltip();
+      const el = tip && tip.getElement();
+      if (el && !el.dataset.pangAsinTooltipGuard) {
+        el.dataset.pangAsinTooltipGuard = '1';
+        L.DomEvent.on(el, 'mouseover mouseout', L.DomEvent.stopPropagation);
+      }
+    });
+    detailAnchor.on('tooltipclose', () => {
+      detailOpenRef.current = false;
+    });
+
     const contextFeatures = geojsonAll.features.filter(
       (f) => !producingNames.has(normName(f.properties.shapeName || f.properties.name || ''))
     );
 
-    /* WHAT: Non-producing na bayan = context outline lang (may hover note, walang label).
-       WHY: label lamang ang producing municipalities para hindi magsiksikan sa mapa. */
+    /* WHAT: Non-producing na bayan = context outline + pangalan (walang datos).
+       WHY: labeling lahat ng 48 bayan para makita ang buong lalawigan, gaya
+              ng dating (Sep 18) admin map. */
     L.geoJSON(contextFeatures, {
       style: {
         fillColor: '#E2E8F0',
@@ -381,6 +410,10 @@ function MunicipalityMap({ muniData, selectedName }) {
           `<div style="min-width:170px"><strong>${label}</strong><br/><span style="font-size:0.85rem;color:#6B7280">No production data recorded yet</span></div>`,
           { sticky: true, direction: 'auto', offset: [0, -8] }
         );
+        L.marker(layer.getBounds().getCenter(), {
+          icon: L.divIcon({ className: 'muni-name-label', html: label, iconSize: null }),
+          interactive: false,
+        }).addTo(map);
       },
     }).addTo(map);
 
@@ -459,21 +492,15 @@ if (geoJsonLayerRef.current) {
       const container = mapRef.current;
       let resizeObserver = null;
       let fitted = false;
-      /* WHAT: Focus border ay SA mga producing municipality lamang.
-         WHY: hindi na zoomin ang buong lalawigan na may malalaking walang-data
-              na bayan; mas malapit ang itinatampok ng mapa. */
-      const producingFeatures = geojson.features.filter((f) =>
-        producingNames.has(normName(f.properties.name))
-      );
-      const focusBounds = producingFeatures.length
-        ? L.geoJSON(producingFeatures).getBounds()
-        : provinceBounds;
+      /* WHAT: Buong lalawigan ang inilalagay sa loob ng view (dating admin look).
+         WHY: dating (Sep 18) admin map ay ipinapakita ang buong Pangasinan
+              sa isang sulyap — hindi lang ang mga bayang may datos. */
       const fitToProvince = () => {
         if (fitted) return;
         fitted = true;
         map.invalidateSize();
-        map.setMaxBounds(provinceBounds.pad(0.1));
-        map.fitBounds(focusBounds.pad(0.15), { padding: [12, 12] });
+        map.setMaxBounds(provinceBounds.pad(0.06));
+        map.fitBounds(provinceBounds, { padding: [10, 10] });
         if (resizeObserver) resizeObserver.disconnect();
       };
       if (typeof ResizeObserver !== 'undefined') {
@@ -533,7 +560,7 @@ if (geoJsonLayerRef.current) {
         <p className="text-muted small mb-0 mt-2">
           Based on total recorded volume from approved production records. Shaded gray municipalities have no
           recorded production yet. Municipal boundaries referenced from NAMRIA / PSA administrative data.
-          &copy; <a href="https://www.esri.com">Esri</a> &mdash; Esri World Light Gray basemap.
+          &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors.
         </p>
       </Card.Body>
     </Card>
