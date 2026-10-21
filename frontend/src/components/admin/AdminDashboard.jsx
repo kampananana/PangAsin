@@ -9,7 +9,7 @@ import {
 } from '../../services/dataService';
 import { BRAND, oceanScale, OCEAN_LIGHT } from '../../theme/colors';
 import { buildProvinceMaskRings, addProvinceMask, addBasemap } from '../../utils/mapLayers';
-import { buildMapDetailCard, clampMapDetailTooltip } from '../../utils/mapDetailCard';
+import { buildMapDetailCard, clampMapDetailTooltip, protectMapDetailCard } from '../../utils/mapDetailCard';
 import geojson from '../../data/pangasinan_municipalities.json';
 import geojsonAll from '../../data/pangasinan_municipalities_all.json';
 import KpiCard from '../ui/KpiCard';
@@ -376,18 +376,9 @@ function MunicipalityMap({ muniData, selectedName }) {
             marker; paglabas ng mouse sa card, ang mouseout ay bumabalik sa
             mapa at nagsasara ng tooltip (nawawala ang card pagkatapos ng
             pan + zoom). Hinahawakan dito ang 'mouseover mouseout' sa mismong
-            tooltip element para hindi ito maisabog sa mapa. */
-    detailAnchor.on('tooltipopen', () => {
-      const tip = detailAnchor.getTooltip();
-      const el = tip && tip.getElement();
-      if (el && !el.dataset.pangAsinTooltipGuard) {
-        el.dataset.pangAsinTooltipGuard = '1';
-        L.DomEvent.on(el, 'mouseover mouseout', L.DomEvent.stopPropagation);
-      }
-    });
-    detailAnchor.on('tooltipclose', () => {
-      detailOpenRef.current = false;
-    });
+            tooltip element para hindi ito maisabog sa mapa.
+            Ang helper ay shared sa public map (frontend/src/utils/mapDetailCard.js). */
+    protectMapDetailCard(detailAnchor, { onClose: () => { detailOpenRef.current = false; } });
 
     const contextFeatures = geojsonAll.features.filter(
       (f) => !producingNames.has(normName(f.properties.shapeName || f.properties.name || ''))

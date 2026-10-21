@@ -2,10 +2,15 @@
 //       Pangasinan — pang-unang bagay na nakikita sa public page.
 // WHY: Ang bisitante ay nangangailangan ng konteksto bago ang mga numero:
 //      sino ang ASIN Center, ano ang sinusukat, at saan galing ang datos.
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, Factory, MapPin, Layers } from 'lucide-react';
 
-export default function PublicIntro({ municipalities = [], supplyDemand = null }) {
+/* WHAT: Format ng petsa para sa "Data as of" (halimbawa: "October 21, 2026").
+   WHY: parehong hugis ng dating na "June 30, 2026" na ginagamit dati. */
+const formatAsOf = (date) =>
+  `${date.toLocaleDateString('en-US', { month: 'long' })} ${date.getDate()}, ${date.getFullYear()}`;
+
+export default function PublicIntro({ municipalities = [] }) {
   // WHAT: Buod ng katotohanan mula sa live payload.
   // WHY: walang bagong request — kinukuha sa /api/public/dashboard na naka-load
   //      na ng GuestDashboard, kaya laging tugma sa mga chart sa ibaba.
@@ -20,7 +25,23 @@ export default function PublicIntro({ municipalities = [], supplyDemand = null }
     return { producing: municipalities.length, beds, methods: methods.size };
   }, [municipalities]);
 
-  const asOf = supplyDemand?.asOfDate ? String(supplyDemand.asOfDate) : 'latest approved records';
+  /* WHAT: "Data as of" ay ang KASALUKUYANG petsa, at live na nag-u-update.
+     WHY: dati ay hard-coded ang petsa ("June 30, 2026") kaya laging luma ang
+          label. Ginawa namin itong mula sa oras ng browser at sinisiksik ang
+          bawat minuto (at sa focus / visibility change) para mag-roll over sa
+          bagong araw kahit na naiwanang bukas ang page. */
+  const [asOf, setAsOf] = useState(() => formatAsOf(new Date()));
+  useEffect(() => {
+    const refresh = () => setAsOf(formatAsOf(new Date()));
+    const timer = window.setInterval(refresh, 60 * 1000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, []);
 
   return (
     <section className="public-intro" aria-labelledby="public-intro-title">

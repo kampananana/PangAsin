@@ -44,3 +44,23 @@ export function clampMapDetailTooltip(map, anchor, containerEl) {
     if (anchor.isTooltipOpen()) anchor.openTooltip();
   });
 }
+
+/* WHAT: Huwag na payag ang mapa na "mapatay" ang detail card.
+   WHY: ang card ay isang interactive Leaflet tooltip sa zero-size anchor
+        marker; paglabas ng mouse sa card, ang mouseout ay bumabalik sa
+        mapa at nagsasara ng tooltip (nawawala ang card pagkatapos ng
+        pan + zoom). Hinahawakan dito ang 'mouseover mouseout' sa mismong
+        tooltip element para hindi ito maisabog sa mapa.
+   onClose: tinatawag kapag nakatuwa ang card, para ma-sync ang hover state
+        (para hindi maiwanang naka-stuck ang hover tooltip suppression). */
+export function protectMapDetailCard(anchor, { onClose } = {}) {
+  anchor.on('tooltipopen', () => {
+    const tip = anchor.getTooltip();
+    const el = tip && tip.getElement();
+    if (el && !el.dataset.pangAsinTooltipGuard) {
+      el.dataset.pangAsinTooltipGuard = '1';
+      L.DomEvent.on(el, 'mouseover mouseout', L.DomEvent.stopPropagation);
+    }
+  });
+  if (typeof onClose === 'function') anchor.on('tooltipclose', onClose);
+}

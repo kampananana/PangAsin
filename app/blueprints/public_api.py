@@ -238,11 +238,12 @@ def _supply_demand():
         "industry": 120000.0,
         "agriculture": 63608.0,
     }
+    today = datetime.now()
     return {
         "philippines": philippines,
         "pangasinan": pangasinan,
         "sectorDemand": sector_demand,
-        "asOfDate": "June 30, 2026",
+        "asOfDate": f"{today.strftime('%B')} {today.day}, {today.year}",
     }
 
 

@@ -5,7 +5,7 @@ import L from 'leaflet';
 import geojson from '../data/pangasinan_municipalities.json';
 import geojsonAll from '../data/pangasinan_municipalities_all.json';
 import { getMunicipalityProduction, getDemographicsByMunicipality } from '../services/dataService';
-import { buildMapDetailCard, clampMapDetailTooltip } from '../utils/mapDetailCard';
+import { buildMapDetailCard, clampMapDetailTooltip, protectMapDetailCard } from '../utils/mapDetailCard';
 import { oceanScale, OCEAN_LIGHT, BRAND } from '../theme/colors';
 import { addBasemap, buildProvinceMaskRings, addProvinceMask } from '../utils/mapLayers';
 
@@ -47,8 +47,11 @@ export default function MunicipalityMapSection() {
         minZoom: 7,
         maxZoom: 15,
         maxBoundsViscosity: 1.0,
-        zoomControl: false,
-        dragging: false,
+        /* WHAT: Zoom +/- (top-left) at draggable ang mapa — pareho sa admin map.
+           WHY: parehong itsura at parehong gamit ng dalawang mapa; scroll-wheel
+                ay naka-off para hindi mahuli ang page scroll sa ibabaw ng mapa. */
+        zoomControl: true,
+        dragging: true,
         scrollWheelZoom: false,
         doubleClickZoom: false,
         boxZoom: false,
@@ -75,6 +78,12 @@ export default function MunicipalityMapSection() {
       opacity: 1,
       offset: [14, 30],
     });
+    /* WHAT: Parehong proteksyon ng card sa admin map (shared helper).
+       WHY: kapag interactive na ang mapa, kapag umalis ang mouse sa card
+            (halimbawa papunta sa +/- zoom button) nagsasa-fire ang DOM
+            'mouseout' -> Leaflet -> anchor marker -> closeTooltip -> nawawala
+            ang card. Itinatago natin ang event sa loob ng card sa mapa. */
+    protectMapDetailCard(detailAnchor, { onClose: () => { detailOpenRef.current = false; } });
     map.on('click', (e) => {
       const target = e.originalEvent && e.originalEvent.target;
       if (target && target.classList && target.classList.contains('leaflet-interactive')) return;
@@ -125,6 +134,26 @@ export default function MunicipalityMapSection() {
       },
       onEachFeature: (feature, layer) => {
         const m = byName[normName(feature.properties.name)];
+        /* WHAT: Isang bind lang ng hover tooltip (pareho sa admin map).
+           WHY: kung paulit-ulit ang bind sa bawat hover, nagre-register ito ng
+                sariling Leaflet click handler (_openTooltip) NA UNG sa aming
+                click handler — kaya binubuksan nito ulit ang hover tooltip
+                pagkatapos nito, na nakasapat sa detail card. Isang bind lang:
+                una ang Leaflet, saka kami — kaya kami ang nagsasara nito. */
+        if (m) {
+          const trendSymbol = m.productionChangePercent >= 0 ? '↑' : '↓';
+          const trendClass = m.productionChangePercent >= 0 ? 'text-success' : 'text-danger';
+          const changeText = m.productionChangePercent != null ? `${trendSymbol} ${Math.abs(m.productionChangePercent)}%` : '—';
+          const tooltipContent = `
+            <div style="min-width:160px">
+              <strong>${m.name}</strong><br/>
+              <span style="font-size:0.85rem">Production: ${m.productionMT.toLocaleString()} MT</span><br/>
+              <span class="${trendClass}" style="font-size:0.85rem">${changeText}</span><br/>
+              <span style="font-size:0.85rem;color:#495057">Method: ${m.dominantMethod.charAt(0).toUpperCase() + m.dominantMethod.slice(1)}</span>
+            </div>
+          `;
+          layer.bindTooltip(tooltipContent, { sticky: true, direction: 'right', offset: [12, 0], className: 'muni-hover-tooltip' });
+        }
         layer.on({
           mouseover: (e) => {
             const target = e.target;
@@ -133,18 +162,7 @@ export default function MunicipalityMapSection() {
             if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
               target.bringToFront();
             }
-            const trendSymbol = m.productionChangePercent >= 0 ? '↑' : '↓';
-            const trendClass = m.productionChangePercent >= 0 ? 'text-success' : 'text-danger';
-            const changeText = m.productionChangePercent != null ? `${trendSymbol} ${Math.abs(m.productionChangePercent)}%` : '—';
-            const tooltipContent = `
-              <div style="min-width:160px">
-                <strong>${m.name}</strong><br/>
-                <span style="font-size:0.85rem">Production: ${m.productionMT.toLocaleString()} MT</span><br/>
-                <span class="${trendClass}" style="font-size:0.85rem">${changeText}</span><br/>
-                <span style="font-size:0.85rem;color:#495057">Method: ${m.dominantMethod.charAt(0).toUpperCase() + m.dominantMethod.slice(1)}</span>
-              </div>
-            `;
-            target.bindTooltip(tooltipContent, { sticky: true, direction: 'right', offset: [12, 0], className: 'muni-hover-tooltip' }).openTooltip();
+            target.openTooltip(e.latlng);
           },
           mouseout: (e) => {
             geoJsonLayerRef.current.resetStyle(e.target);
@@ -163,7 +181,7 @@ export default function MunicipalityMapSection() {
             const changePct = m.productionChangePercent;
             const trendSymbol = changePct != null ? (changePct >= 0 ? '↑' : '↓') : '';
             const changeText = changePct != null ? `${trendSymbol} ${Math.abs(changePct)}%` : '—';
-            const mtPerBed = m.saltBeds > 0 ? `${Math.round((m.productionMT / m.saltBeds) * 1000) / 1000} MT` : '—';
+            const kgPerBed = m.saltBeds > 0 ? ((m.productionMT * 1000) / m.saltBeds).toFixed(2) : '—';
             const html = buildMapDetailCard({
               name: m.name,
               rows: [
@@ -173,7 +191,7 @@ export default function MunicipalityMapSection() {
                 ['Salt Beds', (m.saltBeds || 0).toLocaleString()],
                 ['Dominant Method', m.dominantMethod.charAt(0).toUpperCase() + m.dominantMethod.slice(1)],
                 ['Male / Female', genderText],
-                ['MT per Bed', mtPerBed],
+                ['Kg per Bed', kgPerBed],
               ],
             });
             const b = layer.getBounds();

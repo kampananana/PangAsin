@@ -99,7 +99,6 @@ export default function GuestDashboard() {
           <Reveal>
             <PublicIntro
               municipalities={data.municipalities || []}
-              supplyDemand={data.supplyDemand || null}
             />
           </Reveal>
 
