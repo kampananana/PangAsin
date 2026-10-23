@@ -4,42 +4,43 @@
 //      login card sa kanan). Naka-scope sa .login-* na mga klase para hindi
 //      epekto sa ibang pages (encoder, admin, at guest dashboard).
 
-import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Container, Form } from 'react-bootstrap';
-import { AlertCircle, ArrowLeft, ArrowRight, Eye, EyeOff, Loader2, Lock, Mail, MapPin, Phone } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Button, Card, Col, Container, Form, Row } from 'react-bootstrap';
+import { AlertCircle, ArrowLeft, ArrowRight, CalendarDays, Eye, EyeOff, Loader2, Lock, Mail, MapPin, Phone, Scale, ShieldCheck } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import Reveal from './Reveal';
+import { SkeletonBlock } from './Skeleton';
 import { loadPublicDashboardData, loginAPI, getMunicipalityProduction } from '../services/dataService';
+import { formatMTWithUnit } from '../utils/volumeFormat';
 import { useToast } from './Toast';
+import AdminKpiCard from './admin/AdminKpiCard';
+import useCountUp from '../hooks/useCountUp';
 
-import dasolLogo from '../assets/dasol.png';
-import infantaLogo from '../assets/infanta.png';
-import andaLogo from '../assets/anda.png';
-import bolinaoLogo from '../assets/bolinao.png';
-import alaminosLogo from '../assets/alaminos.png';
-import baniLogo from '../assets/bani.png';
-import sanFabianLogo from '../assets/sanfabian.png';
+const POLICY_MANDATE = 'RA 11985';
 
-const MUNICIPALITIES = [
-  { name: 'Dasol', logo: dasolLogo },
-  { name: 'Infanta', logo: infantaLogo },
-  { name: 'Anda', logo: andaLogo },
-  { name: 'Bolinao', logo: bolinaoLogo },
-  { name: 'Alaminos', logo: alaminosLogo },
-  { name: 'Bani', logo: baniLogo },
-  { name: 'San Fabian', logo: sanFabianLogo },
-];
+function formatProductionYears(records) {
+  const years = [...new Set(
+    (records || [])
+      .map((record) => Number(record.year))
+      .filter((year) => Number.isInteger(year)),
+  )].sort((a, b) => a - b);
 
-function normalizeMunicipalityName(name) {
-  if (!name) return '';
-  return name.toString().toLowerCase().replace(/\s+/g, '').replace(/[^a-z]/g, '');
-}
+  if (!years.length) return [];
 
-function formatMunicipalityVolume(volume) {
-  if (volume === null || volume === undefined || Number.isNaN(Number(volume))) {
-    return 'No data yet';
-  }
-  return Number(volume).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' MT';
+  const ranges = [];
+  let start = years[0];
+  let previous = years[0];
+
+  years.slice(1).forEach((year) => {
+    if (year === previous + 1) {
+      previous = year;
+      return;
+    }
+    ranges.push(start === previous ? `${start}` : `${start}–${previous}`);
+    start = year;
+  });
+  ranges.push(start === previous ? `${start}` : `${start}–${previous}`);
+  return ranges;
 }
 
 export default function Login({ onLogin }) {
@@ -48,17 +49,18 @@ export default function Login({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [heroReady, setHeroReady] = useState(false);
-  const [municipalityVolumes, setMunicipalityVolumes] = useState({});
-  const [municipalityDataLoading, setMunicipalityDataLoading] = useState(true);
-  const [municipalityDataError, setMunicipalityDataError] = useState(false);
+  const [kpiData, setKpiData] = useState(null);
+  const [kpiError, setKpiError] = useState(false);
   const [errorKey, setErrorKey] = useState(0);
+  const [heroReady, setHeroReady] = useState(false);
   const navigate = useNavigate();
   const { toastSuccess } = useToast();
 
   const heroRef = useRef(null);
   const statsRef = useRef(null);
 
+  // WHAT: I-mark ang hero na "ready" para sa staggered fade-up (transform lang).
+  // WHY: Hindi libo-libo ang animasyon habang hindi pa visible ang hero. */
   useEffect(() => {
     const timer = setTimeout(() => {
       setHeroReady(true);
@@ -66,39 +68,88 @@ export default function Login({ onLogin }) {
     return () => clearTimeout(timer);
   }, []);
 
+
   useEffect(() => {
     let active = true;
 
     loadPublicDashboardData()
-      .then(() => {
-        if (!active) return;
-        try {
-          const productions = getMunicipalityProduction();
-          const map = {};
-          productions.forEach((m) => {
-            const key = normalizeMunicipalityName(m.name);
-            if (key) {
-              map[key] = m.productionMT;
-            }
-          });
-          setMunicipalityVolumes(map);
-        } catch (err) {
-          setMunicipalityDataError(true);
-        } finally {
-          if (active) setMunicipalityDataLoading(false);
-        }
+      .then((data) => {
+        if (active) setKpiData(data || {});
       })
       .catch(() => {
-        if (active) {
-          setMunicipalityDataError(true);
-          setMunicipalityDataLoading(false);
-        }
+        if (active) setKpiError(true);
       });
 
     return () => {
       active = false;
     };
   }, []);
+
+  const isLoading = kpiData === null && !kpiError;
+
+  /* WHAT: Numero ang kalkulahin mula sa totoong dashboard data.
+     WHY: Kapag may totoong data, mula ito; kapag walang data o nag-error,
+          hindi inuubos ang random na numero para maiwasan ang makabubulong
+          na data sa UI. */
+  const dashboardNumbers = useMemo(() => {
+    if (kpiError || !kpiData) {
+      return {
+        municipalityCount: null,
+        yearRange: null,
+        totalMT: null,
+        dataAvailable: false,
+      };
+    }
+
+    const municipalities = Array.isArray(kpiData.municipalities) ? kpiData.municipalities : [];
+    const production = kpiData.production || {};
+    const records = Array.isArray(production.records) ? production.records : [];
+    const years = formatProductionYears(records);
+    const totalMT = Number.isFinite(Number(production.provinceTotalMT))
+      ? Number(production.provinceTotalMT)
+      : null;
+
+    let yearRange = null;
+    if (years.length > 0) {
+      const start = years[0].includes('–') ? years[0].split('–')[0] : years[0];
+      const end = years[years.length - 1].includes('–')
+        ? years[years.length - 1].split('–')[1]
+        : years[years.length - 1];
+      yearRange = start === end ? start : `${start}–${end}`;
+    }
+
+    return {
+      municipalityCount: municipalities.length,
+      yearRange,
+      totalMT,
+      dataAvailable: true,
+    };
+  }, [kpiData, kpiError]);
+
+  const municipalityCount = useCountUp(dashboardNumbers.municipalityCount, { containerRef: statsRef });
+  const displayedYearRange = useCountUp(dashboardNumbers.yearRange, { containerRef: statsRef });
+  const animatedTotal = useCountUp(dashboardNumbers.totalMT, { containerRef: statsRef });
+
+  const kpis = useMemo(() => {
+    const notAvailable = !dashboardNumbers.dataAvailable;
+
+    return {
+      municipalities: {
+        value: notAvailable ? 'Data unavailable' : String(municipalityCount),
+        supporting: 'Municipalities with approved production records',
+      },
+      years: {
+        value: notAvailable ? 'Data unavailable' : displayedYearRange,
+        supporting: 'Distinct years with approved monthly production records',
+      },
+      production: {
+        value: notAvailable ? 'Data unavailable' : formatMTWithUnit(animatedTotal),
+        supporting: 'Approved production recorded in the public dashboard',
+      },
+    };
+  }, [municipalityCount, displayedYearRange, animatedTotal, dashboardNumbers.dataAvailable]);
+
+  const municipalityCards = kpiData ? getMunicipalityProduction() : [];
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -114,6 +165,7 @@ export default function Login({ onLogin }) {
       navigate(user.role === 'admin' ? '/admin' : '/encoder');
     } catch (err) {
       const message = err.message || 'Login failed.';
+      // WHAT: Pagbubukas ng isang bagong error, ipapatay ang shake animation.
       setErrorKey((key) => key + 1);
       setError(message);
     } finally {
@@ -132,23 +184,38 @@ export default function Login({ onLogin }) {
           <div className="login-hero-photo" />
         </div>
         <div className="login-hero-veil" />
-        <div className="login-hero-row">
-          <div className="login-hero-copy">
-            <img
-              src="/static/brand/PangAsin_Logo.png"
-              alt="PangAsin"
-              className="login-hero-logo"
-            />
-            <h1 className="login-hero-title">PangAsin</h1>
-            <p className="login-hero-tagline">
-              The Accelerating Salt Research and Innovation (ASIN) Center at Pangasinan State
-              University supports the Philippine salt industry through research,
-              innovation, and data-driven planning under RA 11985.
-            </p>
-          </div>
+        <div className="login-hero-content">
+          <img
+            src="/static/brand/PangAsin_Logo.png"
+            alt="PangAsin"
+            className="login-hero-logo"
+          />
+          <h1 className="login-hero-title">PangAsin</h1>
+          <p className="login-hero-tagline">
+            The Accelerating Salt Research and Innovation (ASIN) Center at Pangasinan State
+            University supports the Philippine salt industry through research,
+            innovation, and data-driven planning under RA 11985.
+          </p>
+          <a className="login-hero-scroll-hint" href="#login-about">
+            <span>Scroll to explore</span>
+            <svg
+              className="login-hero-chevron"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 5v14M6 13l6 6 6-6" />
+            </svg>
+          </a>
+        </div>
 
-          <div className="login-form-card">
-            <h2 className="encoder-login-title">Welcome back</h2>
+        <div className="login-form-region">
+<div className="login-form-card">
+  <h2 className="encoder-login-title">Welcome back</h2>
             <p className="encoder-login-sub">
               Sign in with your encoder or admin account to continue.
             </p>
@@ -242,24 +309,6 @@ export default function Login({ onLogin }) {
               </Link>
             </div>
           </div>
-
-          <a className="login-hero-scroll-hint" href="#login-about">
-            <span>Scroll to explore</span>
-            <svg
-              className="login-hero-chevron"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M12 5v14M6 13l6 6 6-6" />
-            </svg>
-          </a>
         </div>
       </section>
 
@@ -279,43 +328,76 @@ export default function Login({ onLogin }) {
             </p>
           </div>
 
-          <div ref={statsRef} className="login-municipality-grid">
-            {MUNICIPALITIES.map((municipality) => {
-              const key = normalizeMunicipalityName(municipality.name);
-              const volume = municipalityVolumes[key];
-              const volumeDisplay = municipalityDataLoading && !municipalityDataError ? 'Loading...' : formatMunicipalityVolume(volume);
-              return (
-                <Reveal key={municipality.name} className="login-municipality-reveal">
-                  <div className="login-municipality-card">
-                    <div className="login-municipality-logo-wrap">
-                      <img
-                        src={municipality.logo}
-                        alt={municipality.name + ' logo'}
-                        className="login-municipality-logo"
-                      />
-                    </div>
-                    <div className="login-municipality-name">{municipality.name}</div>
-                    <div className="login-municipality-volume">{volumeDisplay}</div>
-                  </div>
-                </Reveal>
-              );
-            })}
-          </div>
+<div ref={statsRef} className="login-muni-grid-wrap">
+  {municipalityCards.length === 0 ? (
+    <div className="text-center text-muted">Municipality production data unavailable.</div>
+  ) : (
+    <>
+      <div className="login-muni-top">
+        <Reveal className="login-about-reveal">
+          <Card className="login-about-kpi login-muni-kpi">
+            <Card.Body className="admin-kpi-body text-center">
+              <img src="/static/brand/PangAsin_Logo.png" alt="" className="login-muni-logo" />
+              <div className="login-muni-top-label">Top producer</div>
+              <div className="admin-kpi-title">{municipalityCards[0].name}</div>
+              <div className="admin-kpi-value">{formatMTWithUnit(municipalityCards[0].productionMT)}</div>
+              <div className="admin-kpi-supporting">Total production</div>
+            </Card.Body>
+          </Card>
+        </Reveal>
+      </div>
+      <div className="login-muni-grid">
+        {municipalityCards.slice(1).map((m) => (
+          <Reveal className="login-about-reveal" key={m.id}>
+            <Card className="login-about-kpi login-muni-kpi">
+              <Card.Body className="admin-kpi-body text-center">
+                <img src="/static/brand/PangAsin_Logo.png" alt="" className="login-muni-logo" />
+                <div className="admin-kpi-title">{m.name}</div>
+                <div className="admin-kpi-value">{formatMTWithUnit(m.productionMT)}</div>
+                <div className="admin-kpi-supporting">Total production</div>
+              </Card.Body>
+            </Card>
+          </Reveal>
+        ))}
+      </div>
+    </>
+  )}
+</div>
         </Container>
       </section>
 
+      {/*
+        PLACEHOLDER CONTENT — must be replaced with real values before deployment:
+        1. Contact details below (email, phone, office address) are PLACEHOLDERS
+           pending the official ASIN Center contact information.
+        2. Developer credits are PLACEHOLDERS pending the real names, programs,
+           and graduation year of the system's creators.
+        TODO(user): replace every item marked TODO(user) below with the official
+        contact details and credits. Do not invent real people, phone numbers,
+        or addresses.
+      */}
       <footer className="login-footer">
         <Container>
           <div className="login-footer-grid">
+            <div className="login-footer-brand">
+              <div className="login-footer-brand-row" aria-hidden="true">
+                <img
+                  src="/static/brand/PangAsin_Logo.png"
+                  alt=""
+                  className="login-footer-brand-logo"
+                />
+                <span className="login-footer-brand-name">PangAsin</span>
+              </div>
+              <p className="login-footer-brand-desc">
+                Salt production monitoring, forecasting, and decision support.
+              </p>
+              <p className="login-footer-brand-support">
+                Supported by the DOST NICER Program
+              </p>
+            </div>
+
             <div className="login-footer-block">
               <div className="login-footer-eyebrow">Contact</div>
-              <p className="login-footer-aside">
-                <span className="login-footer-aside-title">Accelerating Salt Research and Innovation (ASIN) Center</span>
-                <br />
-                <span className="login-footer-aside-line">Pangasinan State University</span>
-                <br />
-                <span className="login-footer-aside-line">DOST NICER Program</span>
-              </p>
               <ul className="login-footer-details">
                 <li>
                   <Mail size={18} aria-hidden="true" className="login-footer-icon" />
@@ -323,29 +405,23 @@ export default function Login({ onLogin }) {
                     href="mailto:contact@pangasin.gov.ph"
                     className="login-footer-contact-link"
                   >
-                    contact@pangasin.gov.ph <span className="login-footer-placeholder">(placeholder)</span>
+                    contact@pangasin.gov.ph
                   </a>
                 </li>
                 <li>
-                  <Phone size={18} aria-hidden="true" className="login-footer-icon" />
-                  <span>(075) XXX-XXXX <span className="login-footer-placeholder">(placeholder)</span></span>
-                </li>
-                <li>
                   <MapPin size={18} aria-hidden="true" className="login-footer-icon" />
-                  <span>ASIN Center, PSU Binmaley, Pangasinan <span className="login-footer-placeholder">(placeholder address)</span></span>
+                  <span>ASIN Center, PSU Binmaley, Pangasinan</span>
                 </li>
+                {/* TODO(user): add official phone number row here. Phone placeholder "(075) XXX-XXXX" intentionally hidden. */}
               </ul>
             </div>
 
             <div className="login-footer-block">
               <div className="login-footer-eyebrow">Developed by</div>
               <p className="login-footer-credits">
-                <span className="login-footer-dev-name">[System Creator Name 1]</span>,{" "}
-                <span className="login-footer-dev-name">[System Creator Name 2]</span>{" "}
-                <span className="login-footer-placeholder">(placeholder)</span>
+                <span className="login-footer-dev-name">PangAsin Development Team</span>
                 <br />
-                BS Information Technology, Major in Data Analytics
-                <br />
+                BS Information Technology, Major in Data Analytics,
                 Pangasinan State University
               </p>
               <p className="login-footer-meta">Built for the ASIN Center</p>
